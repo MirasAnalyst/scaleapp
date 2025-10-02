@@ -1,6 +1,134 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
+import { getHandlesForType } from '@/lib/nodeHandles';
+
+const HANDLE_ALIAS_MAP: Record<string, string> = {
+  'feed': 'feed-left',
+  'feedin': 'feed-left',
+  'feed-in': 'feed-left',
+  'feed_in': 'feed-left',
+  'feedleft': 'feed-left',
+  'feedstage6': 'feed-stage-6',
+  'feedstage8': 'feed-stage-8',
+  'feedstage10': 'feed-stage-10',
+  'feedstage12': 'feed-stage-12',
+  'feedstage18': 'feed-stage-18',
+  'feed-stage6': 'feed-stage-6',
+  'feed-stage8': 'feed-stage-8',
+  'feed-stage10': 'feed-stage-10',
+  'feed-stage12': 'feed-stage-12',
+  'feed-stage18': 'feed-stage-18',
+  'feed_stage_6': 'feed-stage-6',
+  'feed_stage_8': 'feed-stage-8',
+  'feed_stage_10': 'feed-stage-10',
+  'feed_stage_12': 'feed-stage-12',
+  'feed_stage_18': 'feed-stage-18',
+  'reflux': 'reflux-top',
+  'refluxtop': 'reflux-top',
+  'overhead': 'overhead-top',
+  'overheadtop': 'overhead-top',
+  'top': 'overhead-top',
+  'bottom': 'bottoms-bottom',
+  'bottoms': 'bottoms-bottom',
+  'bottomout': 'bottoms-bottom',
+  'vaporout': 'vapor',
+  'vapor-top': 'vapor',
+  'liquidout': 'liquid',
+  'liquid-bottom': 'liquid',
+  'gasout': 'gas',
+  'gas-top': 'gas-top',
+  'oilout': 'oil-right',
+  'oil-right': 'oil-right',
+  'waterout': 'water-bottom',
+  'water-bottom': 'water-bottom',
+  'suction': 'suction-left',
+  'discharge': 'discharge-right',
+  'outlet': 'out',
+  'product': 'out',
+  'outlet1': 'out1',
+  'outlet-1': 'out1',
+  'outlet_1': 'out1',
+  'product1': 'out1',
+  'outlet2': 'out2',
+  'outlet-2': 'out2',
+  'outlet_2': 'out2',
+  'product2': 'out2',
+  'outlet3': 'out3',
+  'outlet-3': 'out3',
+  'outlet_3': 'out3',
+  'product3': 'out3',
+  'inlet': 'in',
+  'inlet1': 'in1',
+  'inlet-1': 'in1',
+  'inlet_1': 'in1',
+  'inlet2': 'in2',
+  'inlet-2': 'in2',
+  'inlet_2': 'in2',
+  'branchout': 'branch',
+  'branch-out': 'branch',
+  'branch_out': 'branch',
+  'qin': 'Qin',
+  'q_in': 'Qin',
+  'q-in': 'Qin',
+  'qout': 'Qout',
+  'q_out': 'Qout',
+  'q-out': 'Qout',
+  'shellin': 'shellIn',
+  'shell-in': 'shellIn',
+  'shell_in': 'shellIn',
+  'shellout': 'shellOut',
+  'shell-out': 'shellOut',
+  'shell_out': 'shellOut',
+  'tubein': 'tubeIn',
+  'tube-in': 'tubeIn',
+  'tube_in': 'tubeIn',
+  'tubeout': 'tubeOut',
+  'tube-out': 'tubeOut',
+  'tube_out': 'tubeOut',
+  'secin': 'secIn',
+  'sec-in': 'secIn',
+  'sec_in': 'secIn',
+  'secout': 'secOut',
+  'sec-out': 'secOut',
+  'sec_out': 'secOut'
+};
+
+const canonicalizeHandle = (value: string) => value.toLowerCase().replace(/[-_\s]/g, '');
+
+const normalizeHandle = (
+  raw: string | undefined,
+  allowedHandles: Set<string>
+): string | undefined => {
+  if (!raw) {
+    return undefined;
+  }
+
+  let candidate = raw.trim();
+  if (!candidate) {
+    return undefined;
+  }
+
+  candidate = candidate.replace(/\s+/g, '');
+  candidate = candidate.replace(/_/g, '-');
+
+  const lowerCandidate = candidate.toLowerCase();
+  if (HANDLE_ALIAS_MAP[lowerCandidate]) {
+    candidate = HANDLE_ALIAS_MAP[lowerCandidate];
+  }
+
+  if (allowedHandles.size > 0) {
+    const canonicalCandidate = canonicalizeHandle(candidate);
+    for (const allowed of allowedHandles) {
+      if (canonicalizeHandle(allowed) === canonicalCandidate) {
+        return allowed;
+      }
+    }
+  }
+
+  return candidate;
+};
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
@@ -136,6 +264,8 @@ export async function POST(request: NextRequest) {
     - label (for text labels)
 
     🔌 PORT CONNECTIONS - Use these EXACT handle IDs for proper PHYSICAL positioning:
+
+    🚦 SERVER VALIDATION: Only the handle IDs listed here (and in the node data) are accepted. Any stream using an undefined handle will be rejected.
     
     **Distillation Columns & Towers (vertical equipment):**
     - distillationColumn, packedColumn, absorber, stripper
@@ -504,6 +634,112 @@ export async function POST(request: NextRequest) {
     if (!flowsheetData.nodes || !flowsheetData.edges || !flowsheetData.aspenInstructions) {
       return NextResponse.json(
         { error: 'Invalid flowsheet data structure' },
+        { status: 500 }
+      );
+    }
+
+    const nodeMap = new Map(flowsheetData.nodes.map(node => [node.id, node]));
+    const nodeHandleInfo = new Map<string, {
+      allowedSourceHandles: Set<string>;
+      allowedTargetHandles: Set<string>;
+      requireSourceHandle: boolean;
+      requireTargetHandle: boolean;
+    }>();
+
+    flowsheetData.nodes.forEach(node => {
+      const spec = getHandlesForType(node.type);
+      const ports = node.data?.ports;
+      const outlets = ports?.outlets;
+      const inlets = ports?.inlets;
+      const rawOutlets = Array.isArray(outlets) ? (outlets as Array<string | number | null | undefined>) : [];
+      const rawInlets = Array.isArray(inlets) ? (inlets as Array<string | number | null | undefined>) : [];
+      const outletHandles = new Set<string>(rawOutlets.map(handle => String(handle)));
+      const inletHandles = new Set<string>(rawInlets.map(handle => String(handle)));
+
+      const allowedSourceHandles = new Set<string>();
+      const allowedTargetHandles = new Set<string>();
+
+      if (spec) {
+        spec.sources.forEach(handle => allowedSourceHandles.add(handle));
+        spec.targets.forEach(handle => allowedTargetHandles.add(handle));
+      }
+
+      outletHandles.forEach(handle => allowedSourceHandles.add(handle));
+      inletHandles.forEach(handle => allowedTargetHandles.add(handle));
+
+      const allowAnonymousSource = Boolean(spec?.hasAnonymousSource) && outletHandles.size === 0;
+      const allowAnonymousTarget = Boolean(spec?.hasAnonymousTarget) && inletHandles.size === 0;
+
+      nodeHandleInfo.set(node.id, {
+        allowedSourceHandles,
+        allowedTargetHandles,
+        requireSourceHandle: allowedSourceHandles.size > 0 && !allowAnonymousSource,
+        requireTargetHandle: allowedTargetHandles.size > 0 && !allowAnonymousTarget
+      });
+    });
+
+    const handleErrors: string[] = [];
+
+    flowsheetData.edges.forEach(edge => {
+      const sourceNode = nodeMap.get(edge.source);
+      if (!sourceNode) {
+        handleErrors.push(`Edge ${edge.id} references unknown source node ${edge.source}`);
+        return;
+      }
+
+      const targetNode = nodeMap.get(edge.target);
+      if (!targetNode) {
+        handleErrors.push(`Edge ${edge.id} references unknown target node ${edge.target}`);
+        return;
+      }
+
+      const sourceInfo = nodeHandleInfo.get(edge.source);
+      const targetInfo = nodeHandleInfo.get(edge.target);
+
+      if (sourceInfo) {
+        const normalizedSourceHandle = normalizeHandle(edge.sourceHandle, sourceInfo.allowedSourceHandles);
+
+        if (normalizedSourceHandle && sourceInfo.allowedSourceHandles.size > 0 && !sourceInfo.allowedSourceHandles.has(normalizedSourceHandle)) {
+          handleErrors.push(
+            `Edge ${edge.id} uses invalid sourceHandle "${edge.sourceHandle}" on node ${edge.source}. Allowed: ${Array.from(sourceInfo.allowedSourceHandles).join(', ')}`
+          );
+        }
+
+        if (!normalizedSourceHandle && sourceInfo.requireSourceHandle) {
+          handleErrors.push(
+            `Edge ${edge.id} is missing sourceHandle for node ${edge.source}. Required handles: ${Array.from(sourceInfo.allowedSourceHandles).join(', ')}`
+          );
+        }
+
+        if (normalizedSourceHandle && normalizedSourceHandle !== edge.sourceHandle) {
+          edge.sourceHandle = normalizedSourceHandle;
+        }
+      }
+
+      if (targetInfo) {
+        const normalizedTargetHandle = normalizeHandle(edge.targetHandle, targetInfo.allowedTargetHandles);
+
+        if (normalizedTargetHandle && targetInfo.allowedTargetHandles.size > 0 && !targetInfo.allowedTargetHandles.has(normalizedTargetHandle)) {
+          handleErrors.push(
+            `Edge ${edge.id} uses invalid targetHandle "${edge.targetHandle}" on node ${edge.target}. Allowed: ${Array.from(targetInfo.allowedTargetHandles).join(', ')}`
+          );
+        }
+
+        if (!normalizedTargetHandle && targetInfo.requireTargetHandle) {
+          handleErrors.push(
+            `Edge ${edge.id} is missing targetHandle for node ${edge.target}. Required handles: ${Array.from(targetInfo.allowedTargetHandles).join(', ')}`
+          );
+        }
+
+        if (normalizedTargetHandle && normalizedTargetHandle !== edge.targetHandle) {
+          edge.targetHandle = normalizedTargetHandle;
+        }
+      }
+    });
+
+    if (handleErrors.length > 0) {
+      return NextResponse.json(
+        { error: `Invalid port connections detected:\n- ${handleErrors.join('\n- ')}` },
         { status: 500 }
       );
     }
