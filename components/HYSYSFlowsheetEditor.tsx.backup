@@ -1,0 +1,580 @@
+import React, { useMemo, useState, useCallback, useEffect } from "react";
+import ReactFlow, {
+  Background,
+  Controls,
+  MiniMap,
+  useNodesState,
+  useEdgesState,
+  addEdge,
+  Handle,
+  Position,
+  Node,
+  Edge,
+  Connection,
+} from "reactflow";
+import "reactflow/dist/style.css";
+
+/**
+ * Aspen HYSYS‑style Unit Operations Palette (No GoJS)
+ * ----------------------------------------------------------------------------
+ * This file expands the palette to cover the *common* HYSYS unit operations
+ * as SVG React Flow nodes. Symbols are simplified but follow standard PFD/P&ID
+ * conventions so your team instantly recognizes them.
+ *
+ * Included equipment (aliases in parentheses):
+ *  - Pump (Centrifugal Pump)
+ *  - Valve (Control/Block Valve symbol)
+ *  - Compressor (also usable as Blower)
+ *  - Turbine/Expander
+ *  - Heater / Cooler (generic) + Shell & Tube Heat Exchanger
+ *  - Air Cooler (fin-fan, stylized)
+ *  - Distillation Column (also Absorber/Stripper by labeling)
+ *  - Flash Drum (vertical vapor-liquid separator)
+ *  - Separator (Horizontal 2-phase) + 3‑Phase Separator (horizontal)
+ *  - CSTR (Stirred Tank Reactor)
+ *  - PFR (Plug Flow Reactor / tubular)
+ *  - Boiler / Reboiler
+ *  - Condenser
+ *  - Mixer, Splitter (material junctions)
+ *  - Label
+ *
+ * Streams:
+ *  - Material streams are default edges (AnimatedPipe).
+ *  - Energy streams provided as a dashed, thin arrow edge (EnergyEdge).
+ */
+
+// ────────────────────────────────────────────────────────────────────────────────
+// Shared SVG <defs>
+// ────────────────────────────────────────────────────────────────────────────────
+const SvgDefs = ({ waveId = "wavePattern", metalId = "metalGradient" }) => (
+  <defs>
+    {/* Metal gradient for vessels and housings */}
+    <linearGradient id={metalId} x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stopColor="#9aa7b3" />
+      <stop offset="20%" stopColor="#dfe6ee" />
+      <stop offset="33%" stopColor="#f7fafc" />
+      <stop offset="50%" stopColor="#dfe6ee" />
+      <stop offset="100%" stopColor="#9aa7b3" />
+    </linearGradient>
+
+    {/* Animated liquid wave pattern */}
+    <pattern id={waveId} width="50" height="10" patternUnits="userSpaceOnUse">
+      <g>
+        <path d="M0 7 Q 12.5 0 25 7 T 50 7 V10 H0 Z" fill="#c5d3e0" />
+        <path d="M0 9 Q 12.5 2 25 9 T 50 9 V10 H0 Z" fill="#a3b7ca" />
+        <animateTransform attributeName="patternTransform" type="translate" from="0 0" to="50 0" dur="2s" repeatCount="indefinite" />
+      </g>
+    </pattern>
+
+    {/* Arrowhead marker for edges */}
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor" />
+    </marker>
+  </defs>
+);
+
+// Helpers
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+
+// ────────────────────────────────────────────────────────────────────────────────
+// CORE VESSELS / TANKS
+// ────────────────────────────────────────────────────────────────────────────────
+const DistillationColumnNode = ({ id, data }: { id: string; data: any }) => {
+  const { width = 80, height = 220, fillLevel = 0.5, label = "Column" } = data || {};
+  const level = clamp01(fillLevel);
+  const pad = 6, innerW = width - pad * 2, innerH = height - pad * 2, fillH = innerH * level;
+  return (
+    <div style={{ width, height, position: "relative" }}>
+      <svg width={width} height={height}>
+        <SvgDefs />
+        {/* Capsule shell */}
+        <rect x="0.5" y="0.5" width={width - 1} height={height - 1} rx={width / 2} ry={width / 2} fill="url(#metalGradient)" stroke="#000" />
+        {/* Clip interior */}
+        <clipPath id={`clip-col-${id}`}>
+          <rect x={pad} y={pad} width={innerW} height={innerH} rx={innerW / 2} ry={innerW / 2} />
+        </clipPath>
+        {/* Liquid */}
+        <g clipPath={`url(#clip-col-${id})`}>
+          <rect x={pad} y={pad + (innerH - fillH)} width={innerW} height={fillH} fill="url(#wavePattern)" />
+          <linearGradient id={`liquidGrad-col-${id}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#9fb4ca" />
+            <stop offset="100%" stopColor="#194a7a" />
+          </linearGradient>
+          <rect x={pad} y={pad + (innerH - fillH)} width={innerW} height={fillH} fill={`url(#liquidGrad-col-${id})`} opacity="0.35" />
+        </g>
+        {/* Tray hints */}
+        {Array.from({ length: 10 }).map((_, i) => {
+          const y = pad + (i / 10) * innerH; return <line key={i} x1={4} x2={width - 4} y1={y} y2={y} stroke="#000" strokeDasharray="6 6" opacity="0.25"/>;
+        })}
+        {/* Label */}
+        <rect x={Math.max(0, width / 2 - 40)} y={height / 2 - 12} width="80" height="24" fill="rgba(255,255,255,0.85)" stroke="#000"/>
+        <text x={width/2} y={height/2+6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+      </svg>
+      {/* Ports */}
+      <Handle type="target" position={Position.Left} id="liquidIn" style={{ top: "70%" }} />
+      <Handle type="source" position={Position.Right} id="vaporOut" style={{ top: "30%" }} />
+    </div>
+  );
+};
+
+const FlashDrumNode = ({ id, data }: { id: string; data: any }) => {
+  // Vertical vapor-liquid separator
+  const { width = 90, height = 130, fillLevel = 0.5, label = "Flash Drum" } = data || {};
+  const level = clamp01(fillLevel);
+  const pad = 6, innerW = width - pad * 2, innerH = height - pad * 2, fillH = innerH * level;
+  return (
+    <div style={{ width, height, position: "relative" }}>
+      <svg width={width} height={height}>
+        <SvgDefs />
+        <rect x="0.5" y="0.5" width={width - 1} height={height - 1} rx={width / 3} ry={width / 3} fill="url(#metalGradient)" stroke="#000" />
+        <clipPath id={`clip-flash-${id}`}><rect x={pad} y={pad} width={innerW} height={innerH} rx={innerW/3} ry={innerW/3}/></clipPath>
+        <g clipPath={`url(#clip-flash-${id})`}>
+          <rect x={pad} y={pad + (innerH - fillH)} width={innerW} height={fillH} fill="url(#wavePattern)" />
+        </g>
+        <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+      </svg>
+      <Handle type="target" position={Position.Left} id="feed" style={{ top: "50%" }} />
+      <Handle type="source" position={Position.Top} id="vapor" />
+      <Handle type="source" position={Position.Bottom} id="liquid" />
+    </div>
+  );
+};
+
+const SeparatorHorizontalNode = ({ data }: { data: any }) => {
+  // 2‑phase horizontal separator
+  const { width = 180, height = 70, label = "Separator" } = data || {};
+  return (
+    <div style={{ width, height, position: "relative" }}>
+      <svg width={width} height={height}>
+        <SvgDefs />
+        <rect x="0.5" y="10.5" width={width - 1} height={height - 21} rx={height/2} ry={height/2} fill="url(#metalGradient)" stroke="#000" />
+        <text x={width/2} y={height/2+5} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+      </svg>
+      <Handle type="target" position={Position.Left} id="feed" />
+      <Handle type="source" position={Position.Top} id="gas" />
+      <Handle type="source" position={Position.Right} id="liquid" />
+    </div>
+  );
+};
+
+const Separator3PhaseNode = ({ data }: { data: any }) => {
+  // 3‑phase horizontal separator (gas, oil, water)
+  const { width = 200, height = 80, label = "3‑Phase Sep" } = data || {};
+  return (
+    <div style={{ width, height, position: "relative" }}>
+      <svg width={width} height={height}>
+        <SvgDefs />
+        <rect x="0.5" y="12.5" width={width - 1} height={height - 25} rx={height/2} ry={height/2} fill="url(#metalGradient)" stroke="#000" />
+        {/* Internal weir hints */}
+        <line x1={width*0.35} y1={height*0.25} x2={width*0.35} y2={height*0.75} stroke="#000" opacity=".3" />
+        <line x1={width*0.65} y1={height*0.25} x2={width*0.65} y2={height*0.75} stroke="#000" opacity=".3" />
+        <text x={width/2} y={height/2+5} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+      </svg>
+      <Handle type="target" position={Position.Left} id="feed" />
+      <Handle type="source" position={Position.Top} id="gas" />
+      <Handle type="source" position={Position.Right} id="oil" style={{ top: "55%" }} />
+      <Handle type="source" position={Position.Right} id="water" style={{ top: "80%" }} />
+    </div>
+  );
+};
+
+const TankNode = ({ id, data }: { id: string; data: any }) => {
+  const { width = 140, height = 100, fillLevel = 0.6, label = "Tank" } = data || {};
+  const level = clamp01(fillLevel), pad = 6, innerW = width - pad*2, innerH = height - pad*2, fillH = innerH*level;
+  return (
+    <div style={{ width, height }}>
+      <svg width={width} height={height}><SvgDefs />
+        <rect x="0.5" y="0.5" width={width - 1} height={height - 1} rx={Math.min(16, height/2)} ry={Math.min(16, height/2)} fill="url(#metalGradient)" stroke="#000" />
+        <clipPath id={`clip-tank-${id}`}><rect x={pad} y={pad} width={innerW} height={innerH} rx={12} ry={12}/></clipPath>
+        <g clipPath={`url(#clip-tank-${id})`}>
+          <rect x={pad} y={pad + (innerH - fillH)} width={innerW} height={fillH} fill="url(#wavePattern)" />
+        </g>
+        <rect x={width/2-40} y={height/2-12} width="80" height="24" fill="rgba(255,255,255,0.85)" stroke="#000" />
+        <text x={width/2} y={height/2+6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+      </svg>
+      <Handle type="target" position={Position.Left} id="in" />
+      <Handle type="source" position={Position.Right} id="out" />
+    </div>
+  );
+};
+
+// ────────────────────────────────────────────────────────────────────────────────
+// HEAT TRANSFER
+// ────────────────────────────────────────────────────────────────────────────────
+const HeaterCoolerNode = ({ data }: { data: any }) => {
+  // Generic heater/cooler block; use label to distinguish (Heater/Cooler)
+  const { width = 120, height = 70, label = "Heater" } = data || {};
+  return (
+    <div style={{ width, height }}>
+      <svg width={width} height={height}><SvgDefs />
+        <rect x="0.5" y="0.5" width={width-1} height={height-1} rx={8} ry={8} fill="url(#metalGradient)" stroke="#000"/>
+        <text x={width/2} y={height/2+4} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+      </svg>
+      <Handle type="target" position={Position.Left} />
+      <Handle type="source" position={Position.Right} />
+      {/* Energy handle (top) for duty */}
+      <Handle type="target" position={Position.Top} id="Qin" />
+    </div>
+  );
+};
+
+const ShellTubeHXNode = ({ data }: { data: any }) => {
+  const { width = 140, height = 80, label = "Shell & Tube HX" } = data || {};
+  return (
+    <div style={{ width, height }}>
+      <svg width={width} height={height}><SvgDefs />
+        {/* Shell */}
+        <rect x="0.5" y="10.5" width={width-1} height={height-21} rx={12} ry={12} fill="url(#metalGradient)" stroke="#000"/>
+        {/* Tube bundle hint */}
+        {Array.from({length:4}).map((_,i)=>{
+          const y=20+i*12; return <line key={i} x1={15} x2={width-15} y1={y} y2={y} stroke="#000" opacity=".35"/>;
+        })}
+        <text x={width/2} y={height/2+5} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+      </svg>
+      <Handle type="target" position={Position.Left} id="shellIn" />
+      <Handle type="source" position={Position.Right} id="shellOut" />
+      <Handle type="target" position={Position.Top} id="tubeIn" />
+      <Handle type="source" position={Position.Bottom} id="tubeOut" />
+    </div>
+  );
+};
+
+const AirCoolerNode = ({ data }: { data: any }) => {
+  const { width = 160, height = 90, label = "Air Cooler" } = data || {};
+  return (
+    <div style={{ width, height }}>
+      <svg width={width} height={height}><SvgDefs />
+        <rect x="0.5" y="10.5" width={width-1} height={height-21} rx={8} ry={8} fill="url(#metalGradient)" stroke="#000"/>
+        {/* Fans (stylized) */}
+        {[0.25,0.5,0.75].map((f,i)=> (
+          <g key={i} transform={`translate(${width*f}, ${height/2})`}>
+            <circle cx="0" cy="0" r="12" fill="#fff" stroke="#000"/>
+            <path d="M0 -10 L6 0 L0 10 L-6 0 Z" fill="#cfd8e3" stroke="#000"/>
+          </g>
+        ))}
+        <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+      </svg>
+      <Handle type="target" position={Position.Left} />
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+};
+
+// ────────────────────────────────────────────────────────────────────────────────
+// REACTION
+// ────────────────────────────────────────────────────────────────────────────────
+const CSTRNode = ({ id, data }: { id: string; data: any }) => {
+  // Stirred tank reactor: vessel + impeller
+  const { width = 120, height = 120, fillLevel = 0.5, label = "CSTR" } = data || {};
+  const level = clamp01(fillLevel), pad=8, innerW=width-pad*2, innerH=height-pad*2, fillH=innerH*level;
+  return (
+    <div style={{ width, height }}>
+      <svg width={width} height={height}><SvgDefs />
+        <rect x="0.5" y="0.5" width={width-1} height={height-1} rx={16} ry={16} fill="url(#metalGradient)" stroke="#000"/>
+        <clipPath id={`clip-cstr-${id}`}><rect x={pad} y={pad} width={innerW} height={innerH} rx={14} ry={14}/></clipPath>
+        <g clipPath={`url(#clip-cstr-${id})`}>
+          <rect x={pad} y={pad + (innerH - fillH)} width={innerW} height={fillH} fill="url(#wavePattern)" />
+          {/* Impeller */}
+          <g transform={`translate(${width/2}, ${height/2})`} opacity=".6">
+            <line x1="0" y1="-20" x2="0" y2="20" stroke="#000"/>
+            <path d="M0 0 L16 6 L0 12 Z" fill="#000"/>
+          </g>
+        </g>
+        <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+      </svg>
+      <Handle type="target" position={Position.Left} />
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+};
+
+const PFRNode = ({ data }: { data: any }) => {
+  // Tubular reactor: long rounded rectangle
+  const { width = 180, height = 40, label = "PFR" } = data || {};
+  return (
+    <div style={{ width, height }}>
+      <svg width={width} height={height}><SvgDefs />
+        <rect x="0.5" y="0.5" width={width-1} height={height-1} rx={height/2} ry={height/2} fill="url(#metalGradient)" stroke="#000"/>
+        <text x={width/2} y={height/2+4} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+      </svg>
+      <Handle type="target" position={Position.Left} />
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+};
+
+// ────────────────────────────────────────────────────────────────────────────────
+// ROTATING MACHINERY
+// ────────────────────────────────────────────────────────────────────────────────
+const PumpNode = ({ data }: { data: any }) => {
+  const { label = "Pump" } = data || {};
+  return (
+    <div style={{ width: 70, height: 70, display: "grid", placeItems: "center" }}>
+      <svg width="70" height="55"><SvgDefs />
+        <circle cx="30" cy="22" r="12" fill="url(#metalGradient)" stroke="#000" />
+        <rect x="20" y="34" width="20" height="8" fill="url(#metalGradient)" stroke="#000" />
+      </svg>
+      <div style={{ fontSize: 12, fontWeight: 600, marginTop: 2 }}>{label}</div>
+      <Handle type="target" position={Position.Left} />
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+};
+
+const CompressorNode = ({ data }: { data: any }) => {
+  // Classic compressor: triangle wedge against a circle
+  const { label = "Compressor" } = data || {};
+  return (
+    <div style={{ width: 100, height: 70, display: "grid", placeItems: "center" }}>
+      <svg width="100" height="60"><SvgDefs />
+        <g transform="translate(10,10)">
+          <circle cx="24" cy="20" r="18" fill="url(#metalGradient)" stroke="#000" />
+          <path d="M50 4 L80 20 L50 36 Z" fill="url(#metalGradient)" stroke="#000" />
+        </g>
+      </svg>
+      <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
+      <Handle type="target" position={Position.Left} />
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+};
+
+const TurbineNode = ({ data }: { data: any }) => {
+  // Turbine/expander: inverted triangle wedge
+  const { label = "Turbine" } = data || {};
+  return (
+    <div style={{ width: 100, height: 70, display: "grid", placeItems: "center" }}>
+      <svg width="100" height="60"><SvgDefs />
+        <g transform="translate(10,10)">
+          <path d="M50 4 L20 20 L50 36 Z" fill="url(#metalGradient)" stroke="#000" />
+          <circle cx="76" cy="20" r="18" fill="url(#metalGradient)" stroke="#000" />
+        </g>
+      </svg>
+      <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
+      <Handle type="target" position={Position.Left} />
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+};
+
+// ────────────────────────────────────────────────────────────────────────────────
+// VALVING & SIMPLE DEVICES
+// ────────────────────────────────────────────────────────────────────────────────
+const ValveNode = ({ data }: { data: any }) => {
+  // Gate symbol with stem
+  const { label = "Valve" } = data || {};
+  return (
+    <div style={{ width: 80, height: 80, display: "grid", placeItems: "center" }}>
+      <svg width="80" height="60"><SvgDefs />
+        <g transform="translate(10,10)">
+          <path d="M0 10 L30 25 L30 10 L0 25 Z" fill="url(#metalGradient)" stroke="#000" />
+          <line x1="15" y1="18" x2="15" y2="38" stroke="#000" />
+          <line x1="9" y1="38" x2="21" y2="38" stroke="#000" />
+        </g>
+      </svg>
+      <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
+      <Handle type="target" position={Position.Left} />
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+};
+
+const MixerNode = ({ data }: { data: any }) => {
+  // Junction: multiple feeds -> one product
+  const { label = "Mixer" } = data || {};
+  return (
+    <div style={{ width: 70, height: 70, display: "grid", placeItems: "center" }}>
+      <svg width="70" height="60"><SvgDefs />
+        <circle cx="35" cy="30" r="14" fill="#fff" stroke="#000" />
+      </svg>
+      <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
+      <Handle type="target" position={Position.Left} id="in1" style={{ top: "30%" }} />
+      <Handle type="target" position={Position.Left} id="in2" style={{ top: "70%" }} />
+      <Handle type="source" position={Position.Right} id="out" />
+    </div>
+  );
+};
+
+const SplitterNode = ({ data }: { data: any }) => {
+  // One feed -> two products (Y splitter)
+  const { label = "Splitter" } = data || {};
+  return (
+    <div style={{ width: 80, height: 70, display: "grid", placeItems: "center" }}>
+      <svg width="80" height="60"><SvgDefs />
+        <path d="M40 10 L40 30 M40 30 L15 50 M40 30 L65 50" stroke="#000" fill="none" strokeWidth="3" />
+      </svg>
+      <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
+      <Handle type="target" position={Position.Left} id="in" />
+      <Handle type="source" position={Position.Right} id="out1" style={{ top: "30%" }} />
+      <Handle type="source" position={Position.Right} id="out2" style={{ top: "70%" }} />
+    </div>
+  );
+};
+
+// ────────────────────────────────────────────────────────────────────────────────
+// BOILER / CONDENSER
+// ────────────────────────────────────────────────────────────────────────────────
+const BoilerNode = ({ data }: { data: any }) => {
+  const { label = "Boiler" } = data || {};
+  return (
+    <div style={{ width: 90, height: 90, display: "grid", placeItems: "center" }}>
+      <svg width="90" height="70"><SvgDefs />
+        <g transform="translate(10,6)">
+          <circle cx="25" cy="25" r="22" fill="url(#metalGradient)" stroke="#000" />
+          <circle cx="25" cy="45" r="10" fill="url(#metalGradient)" stroke="#000" />
+        </g>
+      </svg>
+      <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
+      <Handle type="target" position={Position.Left} />
+      <Handle type="source" position={Position.Right} />
+      <Handle type="target" position={Position.Bottom} id="Qin" />
+    </div>
+  );
+};
+
+const CondenserNode = ({ data }: { data: any }) => {
+  const { label = "Condenser" } = data || {};
+  return (
+    <div style={{ width: 90, height: 90, display: "grid", placeItems: "center" }}>
+      <svg width="90" height="70"><SvgDefs />
+        <g transform="translate(10,6)">
+          <circle cx="25" cy="25" r="22" fill="url(#metalGradient)" stroke="#000" />
+          <path d="M5 50 L5 56 L11 56 L5 56 L25 28 L25 36 L45 8" fill="url(#metalGradient)" stroke="#000" />
+        </g>
+      </svg>
+      <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
+      <Handle type="target" position={Position.Left} />
+      <Handle type="source" position={Position.Right} />
+      <Handle type="source" position={Position.Top} id="Qout" />
+    </div>
+  );
+};
+
+// ────────────────────────────────────────────────────────────────────────────────
+// LABEL
+// ────────────────────────────────────────────────────────────────────────────────
+const LabelNode = ({ data }: { data: any }) => {
+  const { text = "Label" } = data || {};
+  return (
+    <div style={{ background: "#fff", border: "1px solid #000", padding: "4px 8px", borderRadius: 4, fontWeight: 600 }}>{text}</div>
+  );
+};
+
+// ────────────────────────────────────────────────────────────────────────────────
+// EDGES (Material & Energy)
+// ────────────────────────────────────────────────────────────────────────────────
+const AnimatedPipe = ({ sourceX, sourceY, targetX, targetY, markerEnd }: any) => {
+  const path = `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
+  return (
+    <g>
+      <path d={path} stroke="#000" strokeWidth={6} fill="none" />
+      <path d={path} stroke="#aaa" strokeWidth={4} fill="none" />
+      <path d={path} className="pipe-flow" stroke="#fff" strokeWidth={3} strokeDasharray="10 10" markerEnd={markerEnd} fill="none" />
+    </g>
+  );
+};
+
+const EnergyEdge = ({ sourceX, sourceY, targetX, targetY }: any) => {
+  // Thin dashed line for heat/work streams
+  const d = `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
+  return <path d={d} stroke="#333" strokeWidth={2} strokeDasharray="6 6" markerEnd="url(#arrow)" fill="none" />;
+};
+
+const edgeTypes = { animatedPipe: AnimatedPipe, energy: EnergyEdge, info: EnergyEdge };
+
+// Register all node types
+const nodeTypes = {
+  // Vessels & Columns
+  distillationColumn: DistillationColumnNode,
+  flashDrum: FlashDrumNode,
+  separator: SeparatorHorizontalNode,
+  separator3p: Separator3PhaseNode,
+  tank: TankNode,
+
+  // Heat transfer
+  heaterCooler: HeaterCoolerNode,
+  shellTubeHX: ShellTubeHXNode,
+  airCooler: AirCoolerNode,
+
+  // Reaction
+  cstr: CSTRNode,
+  pfr: PFRNode,
+
+  // Rotating machinery
+  pump: PumpNode,
+  compressor: CompressorNode,
+  turbine: TurbineNode,
+
+  // Valving & junctions
+  valve: ValveNode,
+  mixer: MixerNode,
+  splitter: SplitterNode,
+
+  // Misc
+  boiler: BoilerNode,
+  condenser: CondenserNode,
+  label: LabelNode,
+};
+
+// ────────────────────────────────────────────────────────────────────────────────
+// Main HYSYS Flowsheet Editor Component
+// ────────────────────────────────────────────────────────────────────────────────
+interface HYSYSFlowsheetEditorProps {
+  generatedNodes?: Node[];
+  generatedEdges?: Edge[];
+}
+
+export default function HYSYSFlowsheetEditor({ generatedNodes = [], generatedEdges = [] }: HYSYSFlowsheetEditorProps) {
+  const [nodes, setNodes, onNodesState] = useNodesState(generatedNodes);
+  const [edges, setEdges, onEdgesState] = useEdgesState(generatedEdges);
+
+  // Update nodes and edges when props change
+  useEffect(() => {
+    setNodes(generatedNodes);
+  }, [generatedNodes, setNodes]);
+
+  useEffect(() => {
+    setEdges(generatedEdges);
+  }, [generatedEdges, setEdges]);
+
+  const onConnect = useCallback((params: Connection) => {
+    setEdges((eds) => addEdge({ ...params, type: "animatedPipe" }, eds));
+  }, [setEdges]);
+
+  const proStyles = useMemo(() => ({
+    width: "100%",
+    height: "100%",
+    borderRadius: 16,
+    overflow: "hidden",
+    boxShadow: "0 10px 25px rgba(0,0,0,0.08)",
+  }), []);
+
+  return (
+    <div style={{ padding: 0, position: "relative", height: "100%" }}>
+      <style>{`
+        .pipe-flow { animation: dash 1.2s linear infinite; }
+        @keyframes dash { to { stroke-dashoffset: -20; } }
+      `}</style>
+
+      <div style={proStyles}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesState}
+          onEdgesChange={onEdgesState}
+          onConnect={onConnect}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          fitView
+        >
+          <Background gap={24} size={1} />
+          <MiniMap pannable zoomable />
+          <Controls />
+        </ReactFlow>
+      </div>
+    </div>
+  );
+}
+
+// Export the node types for use in other components
+export { nodeTypes };

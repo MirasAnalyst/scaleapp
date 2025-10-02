@@ -2,22 +2,8 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  ReactFlow,
-  Background,
-  Controls,
-  MiniMap,
-  useNodesState,
-  useEdgesState,
-  addEdge,
-  Connection,
-  Edge,
-  Node,
-  ReactFlowProvider,
-} from '@xyflow/react';
-import '@xyflow/react/dist/style.css';
-import { nodeTypes } from '../../components/ProcessNodes';
 import { FlowSheetData } from '../api/flowsheet/route';
+import HYSYSFlowsheetEditor from '../../components/HYSYSFlowsheetEditor';
 import { 
   Wand2, 
   Save, 
@@ -48,9 +34,8 @@ export default function BuilderPage() {
   const [description, setDescription] = useState('');
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
-
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [generatedNodes, setGeneratedNodes] = useState<any[]>([]);
+  const [generatedEdges, setGeneratedEdges] = useState<any[]>([]);
 
   // Load history from localStorage on component mount
   useEffect(() => {
@@ -69,10 +54,7 @@ export default function BuilderPage() {
     localStorage.setItem('flowsheet-history', JSON.stringify(history));
   }, [history]);
 
-  const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
-    [setEdges]
-  );
+  // Connection handling is now managed by HYSYSFlowsheetEditor
 
   const generateFlowsheet = async () => {
     if (!prompt.trim()) {
@@ -101,8 +83,8 @@ export default function BuilderPage() {
       const data: FlowSheetData = await response.json();
 
       // Update the flow with new data
-      setNodes(data.nodes);
-      setEdges(data.edges);
+      setGeneratedNodes(data.nodes);
+      setGeneratedEdges(data.edges);
       setAspenInstructions(data.aspenInstructions);
       setDescription(data.description);
 
@@ -115,7 +97,7 @@ export default function BuilderPage() {
       };
 
       setHistory(prev => [historyItem, ...prev.slice(0, 49)]); // Keep last 50 items
-      setSuccess('Flowsheet generated successfully!');
+      setSuccess('Flowsheet generated successfully! Use the equipment palette to build your flowsheet.');
     } catch (error) {
       console.error('Error generating flowsheet:', error);
       setError(error instanceof Error ? error.message : 'Failed to generate flowsheet');
@@ -125,8 +107,8 @@ export default function BuilderPage() {
   };
 
   const loadFromHistory = (item: HistoryItem) => {
-    setNodes(item.data.nodes);
-    setEdges(item.data.edges);
+    setGeneratedNodes(item.data.nodes);
+    setGeneratedEdges(item.data.edges);
     setAspenInstructions(item.data.aspenInstructions);
     setDescription(item.data.description);
     setPrompt(item.prompt);
@@ -135,8 +117,8 @@ export default function BuilderPage() {
   };
 
   const clearFlowsheet = () => {
-    setNodes([]);
-    setEdges([]);
+    setGeneratedNodes([]);
+    setGeneratedEdges([]);
     setAspenInstructions('');
     setDescription('');
     setPrompt('');
@@ -146,10 +128,11 @@ export default function BuilderPage() {
 
   const downloadFlowsheet = () => {
     const data = {
-      nodes,
-      edges,
+      nodes: generatedNodes,
+      edges: generatedEdges,
       aspenInstructions,
       description,
+      prompt,
       timestamp: new Date().toISOString(),
     };
 
@@ -201,7 +184,7 @@ export default function BuilderPage() {
             </button>
             <button
               onClick={downloadFlowsheet}
-              disabled={nodes.length === 0}
+              disabled={generatedNodes.length === 0}
               className="flex items-center space-x-2 px-4 py-2 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Download className="w-4 h-4" />
@@ -301,39 +284,10 @@ export default function BuilderPage() {
 
         {/* Main Flow Area */}
         <div className="flex-1 relative">
-          <ReactFlowProvider>
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onConnect={onConnect}
-              nodeTypes={nodeTypes}
-              fitView
-              className="bg-gray-50 dark:bg-gray-900"
-            >
-              <Background />
-              <Controls />
-              <MiniMap
-                nodeColor={(node) => {
-                  switch (node.type) {
-                    case 'reactor': return '#fbbf24';
-                    case 'separator': return '#3b82f6';
-                    case 'heat_exchanger': return '#ef4444';
-                    case 'pump': return '#10b981';
-                    case 'compressor': return '#8b5cf6';
-                    case 'valve': return '#6b7280';
-                    case 'mixer': return '#f97316';
-                    case 'splitter': return '#6366f1';
-                    case 'distillation_column': return '#06b6d4';
-                    case 'storage_tank': return '#14b8a6';
-                    default: return '#6b7280';
-                  }
-                }}
-                className="bg-white dark:bg-gray-800"
-              />
-            </ReactFlow>
-          </ReactFlowProvider>
+          <HYSYSFlowsheetEditor 
+            generatedNodes={generatedNodes}
+            generatedEdges={generatedEdges}
+          />
         </div>
       </div>
 

@@ -1,15 +1,13 @@
-import { Metadata } from 'next';
+'use client';
+
+import { useState } from 'react';
 import { Cog, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import GenerationForm from '../components/GenerationForm';
 import DiagramPreview from '../components/DiagramPreview';
 
-export const metadata: Metadata = {
-  title: 'Mechanical AutoCAD Drawings | ScaleApp',
-  description: 'Generate professional mechanical engineering drawings including pumps, compressors, heat exchangers, and piping layouts.',
-};
-
 export default function MechanicalPage() {
+  const [generatedDiagram, setGeneratedDiagram] = useState<any>(null);
   return (
     <div className="min-h-screen bg-white dark:bg-black">
       {/* Header */}
@@ -42,6 +40,7 @@ export default function MechanicalPage() {
           <GenerationForm 
             discipline="mechanical"
             placeholder="Example: Draw a pump-to-heat-exchanger loop with centrifugal pump (P-101), shell-and-tube heat exchanger (E-201), 4-inch carbon steel pipe, include 2 gate valves and 1 check valve, show flow arrows and tag callouts."
+            onDiagramGenerated={setGeneratedDiagram}
           />
         </div>
 
@@ -50,6 +49,7 @@ export default function MechanicalPage() {
           <DiagramPreview 
             discipline="mechanical"
             initialPrompt="Pump-to-heat-exchanger loop with centrifugal pump, shell-and-tube heat exchanger, 4-inch carbon steel pipe, gate valves, and check valve"
+            generatedDiagram={generatedDiagram}
           />
         </div>
 

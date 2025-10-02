@@ -28,6 +28,14 @@ export default function Header() {
             </li>
             <li>
               <Link
+                href="/builder-gojs"
+                className="text-sm text-gray-800 dark:text-white px-4 py-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              >
+                GoJS Builder
+              </Link>
+            </li>
+            <li>
+              <Link
                 href="/autocad"
                 className="text-sm text-gray-800 dark:text-white px-4 py-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
               >

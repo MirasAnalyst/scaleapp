@@ -22,5 +22,30 @@ export interface GenerationRequest {
 export interface GenerationResponse {
   status: 'ok' | 'error';
   message?: string;
-  data?: any;
+  data?: {
+    discipline: Discipline;
+    prompt: string;
+    estimatedTime: string;
+    outputFormats: string[];
+    features: {
+      layers: string;
+      blocks: string;
+      annotations: string;
+      dimensions: string;
+    };
+    diagram?: {
+      id: string;
+      discipline: Discipline;
+      title: string;
+      components: any[];
+      connections: any[];
+      svg: string;
+      metadata: {
+        generatedAt: string;
+        prompt: string;
+        estimatedTime: string;
+        outputFormats: string[];
+      };
+    };
+  };
 }

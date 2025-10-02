@@ -1,15 +1,13 @@
-import { Metadata } from 'next';
+'use client';
+
+import { useState } from 'react';
 import { Bolt, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import GenerationForm from '../components/GenerationForm';
 import DiagramPreview from '../components/DiagramPreview';
 
-export const metadata: Metadata = {
-  title: 'Electrical AutoCAD Drawings | ScaleApp',
-  description: 'Generate professional electrical engineering drawings including single-line diagrams, panel schedules, cable trays, and grounding plans.',
-};
-
 export default function ElectricalPage() {
+  const [generatedDiagram, setGeneratedDiagram] = useState<any>(null);
   return (
     <div className="min-h-screen bg-white dark:bg-black">
       {/* Header */}
@@ -42,6 +40,7 @@ export default function ElectricalPage() {
           <GenerationForm 
             discipline="electrical"
             placeholder="Example: Produce a single-line diagram with utility feed to main switchboard 480V, three feeders to MCCs, metering and protective devices per NEC standards."
+            onDiagramGenerated={setGeneratedDiagram}
           />
         </div>
 
@@ -50,6 +49,7 @@ export default function ElectricalPage() {
           <DiagramPreview 
             discipline="electrical"
             initialPrompt="Single-line diagram with utility feed to main switchboard 480V, three feeders to MCCs, metering and protective devices per NEC"
+            generatedDiagram={generatedDiagram}
           />
         </div>
 
