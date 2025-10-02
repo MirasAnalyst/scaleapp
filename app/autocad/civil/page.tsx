@@ -1,15 +1,13 @@
-import { Metadata } from 'next';
+'use client';
+
+import { useState } from 'react';
 import { Building, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import GenerationForm from '../components/GenerationForm';
 import DiagramPreview from '../components/DiagramPreview';
 
-export const metadata: Metadata = {
-  title: 'Civil AutoCAD Drawings | ScaleApp',
-  description: 'Generate professional civil engineering drawings including site plans, grading, utility routing, and foundations.',
-};
-
 export default function CivilPage() {
+  const [generatedDiagram, setGeneratedDiagram] = useState<any>(null);
   return (
     <div className="min-h-screen bg-white dark:bg-black">
       {/* Header */}
@@ -42,6 +40,7 @@ export default function CivilPage() {
           <GenerationForm 
             discipline="civil"
             placeholder="Example: Draft a site plan at 1:200 scale with building footprint, parking areas, sidewalks, and utility connections including water, sewer, and electrical services."
+            onDiagramGenerated={setGeneratedDiagram}
           />
         </div>
 
@@ -50,6 +49,7 @@ export default function CivilPage() {
           <DiagramPreview 
             discipline="civil"
             initialPrompt="Site plan at 1:200 scale with building footprint, parking areas, sidewalks, and utility connections"
+            generatedDiagram={generatedDiagram}
           />
         </div>
 

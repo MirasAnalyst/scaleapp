@@ -18,6 +18,7 @@ import { Discipline } from '../types';
 interface DiagramPreviewProps {
   discipline: Discipline;
   initialPrompt?: string;
+  generatedDiagram?: any;
 }
 
 // Sample SVG diagrams for each discipline
@@ -225,12 +226,14 @@ const modificationSuggestions = {
   ]
 };
 
-export default function DiagramPreview({ discipline, initialPrompt }: DiagramPreviewProps) {
+export default function DiagramPreview({ discipline, initialPrompt, generatedDiagram }: DiagramPreviewProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [modificationPrompt, setModificationPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   const handleModify = async () => {
     if (!modificationPrompt.trim()) return;
@@ -277,6 +280,137 @@ export default function DiagramPreview({ discipline, initialPrompt }: DiagramPre
     setIsEditing(true);
   };
 
+  const handleZoomIn = () => {
+    setZoom(prev => Math.min(3, prev + 0.2));
+  };
+
+  const handleZoomOut = () => {
+    setZoom(prev => Math.max(0.3, prev - 0.2));
+  };
+
+  const handleZoomReset = () => {
+    setZoom(1);
+  };
+
+  const handleFullscreen = () => {
+    setIsFullscreen(!isFullscreen);
+  };
+
+  const handleWheelZoom = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    setZoom(prev => Math.max(0.3, Math.min(3, prev + delta)));
+  };
+
+  const handleExportDXF = async () => {
+    if (!generatedDiagram) {
+      alert('No diagram to export. Please generate a diagram first.');
+      return;
+    }
+
+    setIsExporting(true);
+    
+    try {
+      const response = await fetch('/api/export-dxf', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ diagram: generatedDiagram }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to export DXF file');
+      }
+
+      // Get the filename from the response headers
+      const contentDisposition = response.headers.get('Content-Disposition');
+      const filename = contentDisposition 
+        ? contentDisposition.split('filename=')[1]?.replace(/"/g, '')
+        : `${discipline}_diagram_${Date.now()}.dxf`;
+
+      // Create blob and download
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+    } catch (error) {
+      console.error('Export error:', error);
+      alert('Failed to export DXF file. Please try again.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportDWG = async () => {
+    if (!generatedDiagram) {
+      alert('No diagram to export. Please generate a diagram first.');
+      return;
+    }
+
+    setIsExporting(true);
+    
+    try {
+      const response = await fetch('/api/export-dwg', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ diagram: generatedDiagram }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to export DWG file');
+      }
+
+      const data = await response.json();
+
+      if (data.status === 'success') {
+        // Download the DXF file
+        const dxfBuffer = Buffer.from(data.data.dxfFile.buffer, 'base64');
+        const blob = new Blob([dxfBuffer], { type: data.data.dxfFile.mimeType });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = data.data.dxfFile.filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+
+        // Show conversion instructions
+        const instructions = data.data.instructions;
+        const conversionMethods = data.data.conversionMethods;
+        
+        // Create a modal or alert with instructions
+        const instructionText = `
+${instructions}
+
+QUICK CONVERSION METHODS:
+${conversionMethods.map((method: any, index: number) => 
+  `${index + 1}. ${method.name}:\n   ${method.steps.map((step: string) => `   • ${step}`).join('\n')}`
+).join('\n\n')}
+
+${data.data.note}
+        `.trim();
+
+        alert(instructionText);
+      }
+
+    } catch (error) {
+      console.error('Export error:', error);
+      alert('Failed to export DWG file. Please try again.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-100 dark:border-gray-700 overflow-hidden">
       {/* Header */}
@@ -285,26 +419,53 @@ export default function DiagramPreview({ discipline, initialPrompt }: DiagramPre
           <div>
             <h3 className="text-2xl font-bold">AI-Generated Diagram</h3>
             <p className="text-blue-100 mt-1">Preview and modify your {discipline} design</p>
+            <p className="text-blue-200 text-xs mt-1">Use mouse wheel to zoom, or click fullscreen for detailed view</p>
           </div>
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-3">
             <button
-              onClick={() => setZoom(Math.max(0.5, zoom - 0.1))}
+              onClick={handleZoomOut}
               className="p-2 bg-white/20 rounded-lg hover:bg-white/30 transition-colors"
               aria-label="Zoom out"
             >
               <ZoomOut className="w-4 h-4" />
             </button>
-            <span className="text-sm bg-white/20 px-3 py-1 rounded-lg">
-              {Math.round(zoom * 100)}%
-            </span>
+            
+            {/* Zoom Slider */}
+            <div className="flex items-center space-x-2">
+              <span className="text-xs text-white/80">30%</span>
+              <input
+                type="range"
+                min="0.3"
+                max="3"
+                step="0.1"
+                value={zoom}
+                onChange={(e) => setZoom(parseFloat(e.target.value))}
+                className="w-20 h-2 bg-white/20 rounded-lg appearance-none cursor-pointer slider"
+                style={{
+                  background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((zoom - 0.3) / (3 - 0.3)) * 100}%, rgba(255,255,255,0.2) ${((zoom - 0.3) / (3 - 0.3)) * 100}%, rgba(255,255,255,0.2) 100%)`
+                }}
+              />
+              <span className="text-xs text-white/80">300%</span>
+            </div>
+            
             <button
-              onClick={() => setZoom(Math.min(2, zoom + 0.1))}
+              onClick={handleZoomIn}
               className="p-2 bg-white/20 rounded-lg hover:bg-white/30 transition-colors"
               aria-label="Zoom in"
             >
               <ZoomIn className="w-4 h-4" />
             </button>
+            
             <button
+              onClick={handleZoomReset}
+              className="px-3 py-2 bg-white/20 rounded-lg hover:bg-white/30 transition-colors text-sm font-medium"
+              aria-label="Reset zoom"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            
+            <button
+              onClick={handleFullscreen}
               className="p-2 bg-white/20 rounded-lg hover:bg-white/30 transition-colors"
               aria-label="Fullscreen"
             >
@@ -315,18 +476,58 @@ export default function DiagramPreview({ discipline, initialPrompt }: DiagramPre
       </div>
 
       {/* Diagram Display */}
-      <div className="p-6">
-        <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 overflow-auto">
+      <div className={`p-6 ${isFullscreen ? 'fixed inset-0 z-50 bg-white dark:bg-gray-800' : ''}`}>
+        <div className={`bg-gray-50 dark:bg-gray-700 rounded-lg p-4 overflow-auto ${isFullscreen ? 'h-full' : ''}`}>
           <div 
-            className="inline-block"
+            className="inline-block cursor-move"
             style={{ transform: `scale(${zoom})`, transformOrigin: 'top left' }}
+            onWheel={handleWheelZoom}
           >
-            {sampleDiagrams[discipline]}
+            {generatedDiagram ? (
+              <div dangerouslySetInnerHTML={{ __html: generatedDiagram.svg }} />
+            ) : (
+              sampleDiagrams[discipline]
+            )}
           </div>
         </div>
+        
+        {/* Fullscreen overlay controls */}
+        {isFullscreen && (
+          <div className="absolute top-4 right-4 flex items-center space-x-2">
+            <button
+              onClick={handleZoomOut}
+              className="p-2 bg-black/20 rounded-lg hover:bg-black/30 transition-colors text-white"
+              aria-label="Zoom out"
+            >
+              <ZoomOut className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleZoomReset}
+              className="px-3 py-2 bg-black/20 rounded-lg hover:bg-black/30 transition-colors text-white text-sm font-medium"
+              aria-label="Reset zoom"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              onClick={handleZoomIn}
+              className="p-2 bg-black/20 rounded-lg hover:bg-black/30 transition-colors text-white"
+              aria-label="Zoom in"
+            >
+              <ZoomIn className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleFullscreen}
+              className="p-2 bg-black/20 rounded-lg hover:bg-black/30 transition-colors text-white"
+              aria-label="Exit fullscreen"
+            >
+              <Maximize2 className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {/* Action Buttons */}
-        <div className="flex flex-wrap gap-3 mt-6">
+        {!isFullscreen && (
+          <div className="flex flex-wrap gap-3 mt-6">
           <button
             onClick={() => setIsEditing(!isEditing)}
             className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -343,9 +544,31 @@ export default function DiagramPreview({ discipline, initialPrompt }: DiagramPre
             <span>AI Suggestions</span>
           </button>
           
-          <button className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors">
+          <button 
+            onClick={handleExportDWG}
+            disabled={isExporting || !generatedDiagram}
+            className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {isExporting ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <span>Exporting...</span>
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4" />
+                <span>Export DWG</span>
+              </>
+            )}
+          </button>
+          
+          <button 
+            onClick={handleExportDXF}
+            disabled={isExporting || !generatedDiagram}
+            className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
             <Download className="w-4 h-4" />
-            <span>Export DWG</span>
+            <span>Export DXF</span>
           </button>
           
           <button className="flex items-center space-x-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors">
@@ -353,6 +576,7 @@ export default function DiagramPreview({ discipline, initialPrompt }: DiagramPre
             <span>Reset</span>
           </button>
         </div>
+        )}
 
         {/* Modification Interface */}
         {isEditing && (

@@ -7,9 +7,10 @@ import { Discipline, GenerationRequest, GenerationResponse } from '../types';
 interface GenerationFormProps {
   discipline: Discipline;
   placeholder?: string;
+  onDiagramGenerated?: (diagram: any) => void;
 }
 
-export default function GenerationForm({ discipline, placeholder }: GenerationFormProps) {
+export default function GenerationForm({ discipline, placeholder, onDiagramGenerated }: GenerationFormProps) {
   const [prompt, setPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<GenerationResponse | null>(null);
@@ -48,6 +49,11 @@ export default function GenerationForm({ discipline, placeholder }: GenerationFo
       }
 
       setResult(data);
+      
+      // Pass the generated diagram to the parent component
+      if (data.data?.diagram && onDiagramGenerated) {
+        onDiagramGenerated(data.data.diagram);
+      }
     } catch (err) {
       console.error('Generation error:', err);
       setError(err instanceof Error ? err.message : 'An unexpected error occurred');
