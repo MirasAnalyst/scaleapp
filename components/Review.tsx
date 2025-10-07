@@ -38,7 +38,7 @@ const Review: React.FC<ReviewProps> = ({
       
       {/* Content */}
       <p className="text-gray-600 dark:text-gray-300 mb-6 leading-relaxed text-lg">
-        "{content}"
+        &ldquo;{content}&rdquo;
       </p>
       
       {/* Author */}

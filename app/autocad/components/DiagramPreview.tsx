@@ -75,7 +75,7 @@ const sampleDiagrams = {
       </defs>
       
       {/* Dimensions */}
-      <text x="300" y="180" textAnchor="middle" className="text-xs fill-gray-500">4" Carbon Steel Pipe</text>
+      <text x="300" y="180" textAnchor="middle" className="text-xs fill-gray-500">4&quot; Carbon Steel Pipe</text>
     </svg>
   ),
   
