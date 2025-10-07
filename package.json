@@ -12,6 +12,8 @@
   "license": "ISC",
   "dependencies": {
     "@mlightcad/libredwg-web": "^0.2.3",
+    "@supabase/ssr": "^0.7.0",
+    "@supabase/supabase-js": "^2.74.0",
     "@tarikjabiri/dxf": "^2.8.9",
     "@xyflow/react": "^12.8.5",
     "dxf-writer": "^1.18.4",

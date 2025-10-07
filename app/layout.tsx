@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { ThemeProvider } from "next-themes";
+import AuthButton from "@/components/AuthButton";
 
 import "styles/globals.css";
 
@@ -22,7 +23,23 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="bg-white dark:bg-black min-h-screen">
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
-          {children}
+          <div className="min-h-screen flex flex-col">
+            <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="flex justify-between items-center h-16">
+                  <div className="flex items-center">
+                    <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
+                      ScaleApp
+                    </h1>
+                  </div>
+                  <AuthButton />
+                </div>
+              </div>
+            </header>
+            <main className="flex-1">
+              {children}
+            </main>
+          </div>
         </ThemeProvider>
       </body>
     </html>
