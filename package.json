@@ -17,7 +17,6 @@
     "@tarikjabiri/dxf": "^2.8.9",
     "@xyflow/react": "^12.8.5",
     "dxf-writer": "^1.18.4",
-    "gojs": "^2.1.55",
     "lucide-react": "^0.544.0",
     "next": "^14.2.15",
     "next-themes": "^0.3.0",

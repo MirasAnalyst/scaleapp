@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { ThemeProvider } from "next-themes";
 import AuthButton from "@/components/AuthButton";
+import Link from "next/link";
 
 import "styles/globals.css";
 
@@ -28,9 +29,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="flex justify-between items-center h-16">
                   <div className="flex items-center">
-                    <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
+                    <Link href="/" className="text-xl font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
                       ScaleApp
-                    </h1>
+                    </Link>
                   </div>
                   <AuthButton />
                 </div>
