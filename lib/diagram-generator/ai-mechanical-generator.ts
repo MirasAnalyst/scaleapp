@@ -466,25 +466,11 @@ export class AIMechanicalGenerator {
         generatedAt: new Date().toISOString(),
         prompt: request.prompt,
         estimatedTime: '3-7 minutes',
-        outputFormats: ['DWG', 'DXF', 'SVG'],
-        aiAnalysis: analysis,
-        complexity: this.calculateComplexity(analysis)
+        outputFormats: ['DWG', 'DXF', 'SVG']
       }
     };
   }
 
-  private calculateComplexity(analysis: AIAnalysisResult): string {
-    const equipmentCount = analysis.equipment.length;
-    const hasComplexEquipment = analysis.equipment.some(eq => eq.complexity === 'very_high');
-    
-    if (equipmentCount > 5 || hasComplexEquipment) {
-      return 'High';
-    } else if (equipmentCount > 3) {
-      return 'Medium';
-    } else {
-      return 'Low';
-    }
-  }
 
   private generateAdvancedSVG(analysis: AIAnalysisResult): string {
     const width = 1000;

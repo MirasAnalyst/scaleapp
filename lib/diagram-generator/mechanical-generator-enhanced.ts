@@ -9,7 +9,7 @@ interface ComponentSpec {
 
 interface SystemLayout {
   components: ComponentSpec[];
-  connections: Array<{ from: string; to: string; type: string }>;
+  connections: Array<{ from: string; to: string; type: 'power' | 'signal' | 'piping' | 'structural' }>;
   title: string;
 }
 
@@ -122,7 +122,7 @@ export class MechanicalDiagramGenerator {
 
   private generateSystemLayout(equipment: string[], specs: any, flowDirection: string, prompt: string): SystemLayout {
     const components: ComponentSpec[] = [];
-    const connections: Array<{ from: string; to: string; type: string }> = [];
+    const connections: Array<{ from: string; to: string; type: 'power' | 'signal' | 'piping' | 'structural' }> = [];
     
     let x = 100;
     const y = 200;
@@ -137,12 +137,12 @@ export class MechanicalDiagramGenerator {
       if (previousComponent) {
         connections.push({
           from: previousComponent,
-          to: component.id,
+          to: component.properties.tag,
           type: 'piping'
         });
       }
       
-      previousComponent = component.id;
+      previousComponent = component.properties.tag;
       x += spacing;
     }
 
@@ -202,7 +202,7 @@ export class MechanicalDiagramGenerator {
   private createBasicSystem(specs: any, prompt: string): SystemLayout {
     // Create a basic system based on common mechanical terms
     const components: ComponentSpec[] = [];
-    const connections: Array<{ from: string; to: string; type: string }> = [];
+    const connections: Array<{ from: string; to: string; type: 'power' | 'signal' | 'piping' | 'structural' }> = [];
 
     if (prompt.includes('system') || prompt.includes('loop') || prompt.includes('circuit')) {
       // Create a basic pump-tank system
@@ -299,7 +299,7 @@ export class MechanicalDiagramGenerator {
     return component;
   }
 
-  private addConnection(from: string, to: string, type: string): void {
+  private addConnection(from: string, to: string, type: 'power' | 'signal' | 'piping' | 'structural'): void {
     const connection: DiagramConnection = {
       from: from,
       to: to,

@@ -11,6 +11,7 @@ import ReactFlow, {
   Node,
   Edge,
   Connection,
+  EdgeProps,
 } from "reactflow";
 import "reactflow/dist/style.css";
 
@@ -953,7 +954,7 @@ const TCBubbleNode = () => <div style={{display:'grid',placeItems:'center'}}><In
 // ────────────────────────────────────────────────────────────────────────────────
 // EDGES (Material & Energy)
 // ────────────────────────────────────────────────────────────────────────────────
-const AnimatedPipe = ({ sourceX, sourceY, targetX, targetY, markerEnd }) => {
+const AnimatedPipe = ({ sourceX, sourceY, targetX, targetY, markerEnd }: EdgeProps) => {
   const path = `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
   return (
     <g>
@@ -965,7 +966,7 @@ const AnimatedPipe = ({ sourceX, sourceY, targetX, targetY, markerEnd }) => {
 };
 
 // Step edge for horizontal/vertical lines like Aspen HYSYS
-const StepEdge = ({ sourceX, sourceY, targetX, targetY, markerEnd }) => {
+const StepEdge = ({ sourceX, sourceY, targetX, targetY, markerEnd }: EdgeProps) => {
   // Calculate the midpoint for the step
   const midX = (sourceX + targetX) / 2;
   
@@ -982,7 +983,7 @@ const StepEdge = ({ sourceX, sourceY, targetX, targetY, markerEnd }) => {
 };
 
 // Smooth step edge with better routing
-const SmoothStepEdge = ({ sourceX, sourceY, targetX, targetY, markerEnd }) => {
+const SmoothStepEdge = ({ sourceX, sourceY, targetX, targetY, markerEnd }: EdgeProps) => {
   const deltaX = Math.abs(targetX - sourceX);
   const deltaY = Math.abs(targetY - sourceY);
   
@@ -1010,7 +1011,7 @@ const SmoothStepEdge = ({ sourceX, sourceY, targetX, targetY, markerEnd }) => {
 };
 
 // Advanced step edge with multiple segments for complex routing
-const AdvancedStepEdge = ({ sourceX, sourceY, targetX, targetY, markerEnd }) => {
+const AdvancedStepEdge = ({ sourceX, sourceY, targetX, targetY, markerEnd }: EdgeProps) => {
   const deltaX = targetX - sourceX;
   const deltaY = targetY - sourceY;
   const absDeltaX = Math.abs(deltaX);
@@ -1050,7 +1051,7 @@ const AdvancedStepEdge = ({ sourceX, sourceY, targetX, targetY, markerEnd }) => 
   );
 };
 
-const EnergyEdge = ({ sourceX, sourceY, targetX, targetY }) => {
+const EnergyEdge = ({ sourceX, sourceY, targetX, targetY }: EdgeProps) => {
   // Thin dashed line for heat/work streams - also use step pattern
   const deltaX = Math.abs(targetX - sourceX);
   const deltaY = Math.abs(targetY - sourceY);
