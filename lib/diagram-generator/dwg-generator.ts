@@ -1,4 +1,6 @@
 // DWG generator - provides instructions for DWG conversion
+// Temporarily disabled
+/*
 import { DXFGenerator } from './dxf-generator';
 import { GeneratedDiagram } from './types';
 
@@ -75,3 +77,4 @@ For automated DWG generation, consider integrating with:
     return header;
   }
 }
+*/
