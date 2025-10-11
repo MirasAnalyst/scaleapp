@@ -1,0 +1,319 @@
+{
+  "schemaVersion": "1.0.0",
+  "units": "mm",
+  "project": {
+    "name": "Aurora-LV",
+    "missionProfile": "orbital",
+    "customer": "Aurora Space Systems",
+    "revision": "B1",
+    "designRulesDoc": "docs/rocket-design-rules.md"
+  },
+  "standards": {
+    "structural": "NASA-STD-5001B",
+    "drafting": "ASME_Y14.100",
+    "materials": "MMPDS"
+  },
+  "globalTolerances": {
+    "system": "ASME_Y14_5M",
+    "generalProfileMm": 0.2,
+    "holeToleranceMm": 0.08,
+    "shaftToleranceMm": 0.08,
+    "flatnessMm": 0.05,
+    "perpendicularityMmPer100": 0.2,
+    "concentricityMm": 0.1
+  },
+  "materials": [
+    {
+      "materialId": "AL7050-T7451",
+      "name": "Aluminum 7050",
+      "type": "aluminum",
+      "specification": "AMS-QQ-A-250/11",
+      "temperOrGrade": "T7451",
+      "densityKgPerM3": 2830,
+      "yieldStrengthMpa": 455,
+      "ultimateStrengthMpa": 525,
+      "maxServiceTempC": 120
+    },
+    {
+      "materialId": "IN625",
+      "name": "Inconel 625",
+      "type": "inconel",
+      "specification": "AMS5666",
+      "temperOrGrade": "Solution Annealed",
+      "densityKgPerM3": 8440,
+      "yieldStrengthMpa": 690,
+      "ultimateStrengthMpa": 827,
+      "maxServiceTempC": 650
+    }
+  ],
+  "stages": [
+    {
+      "stageId": "stage1",
+      "type": "booster",
+      "propellants": {
+        "fuel": "RP-1",
+        "oxidizer": "LOX",
+        "pressurant": "helium"
+      },
+      "lengthMm": 25000,
+      "maxDiameterMm": 3800,
+      "dryMassKg": 24500,
+      "propellantMassKg": 185000,
+      "maxOperatingPressureKpa": 5200,
+      "designFactorSafety": 1.35,
+      "avionicsBay": true,
+      "environment": ["sea_level", "vacuum"],
+      "structuralMargins": {
+        "hoopStressMargin": 0.25,
+        "axialStressMargin": 0.18,
+        "bucklingMargin": 0.22
+      }
+    },
+    {
+      "stageId": "stage2",
+      "type": "upper",
+      "propellants": {
+        "fuel": "CH4",
+        "oxidizer": "LOX",
+        "pressurant": "autogenous"
+      },
+      "lengthMm": 12500,
+      "maxDiameterMm": 3500,
+      "dryMassKg": 8200,
+      "propellantMassKg": 65000,
+      "maxOperatingPressureKpa": 4500,
+      "designFactorSafety": 1.4,
+      "avionicsBay": true,
+      "environment": ["vacuum", "reentry"],
+      "structuralMargins": {
+        "hoopStressMargin": 0.22,
+        "axialStressMargin": 0.2,
+        "bucklingMargin": 0.25
+      }
+    }
+  ],
+  "parts": [
+    {
+      "partId": "stage1_tank",
+      "name": "Stage 1 LOX Tank",
+      "category": "tank",
+      "stageRef": "stage1",
+      "materialId": "AL7050-T7451",
+      "manufacturingProcess": "spun_forming",
+      "geometry": {
+        "boundingBoxMm": {
+          "length": 3800,
+          "width": 3800,
+          "height": 12000
+        },
+        "wallThicknessMm": 8.0,
+        "minGaugeThicknessMm": 6.0,
+        "massBudgetKg": 8800,
+        "cgFromBaseMm": 6000,
+        "principalInertiasKgMm2": {
+          "ixx": 2.5e10,
+          "iyy": 2.5e10,
+          "izz": 4.6e10
+        },
+        "datum": [
+          {
+            "datumId": "stage1_tank_base",
+            "description": "Base flange datum",
+            "reference": "A"
+          }
+        ],
+        "envelopeClearanceMm": 45
+      },
+      "tolerances": {
+        "system": "ASME_Y14_5M",
+        "generalProfileMm": 0.2,
+        "holeToleranceMm": 0.08,
+        "shaftToleranceMm": 0.08,
+        "flatnessMm": 0.05,
+        "perpendicularityMmPer100": 0.2,
+        "concentricityMm": 0.1
+      },
+      "surfaceTreatments": [
+        {
+          "process": "anodize_type_II",
+          "standard": "MIL-A-8625 Type II",
+          "thicknessMicrons": 15
+        }
+      ],
+      "features": [
+        {
+          "featureId": "stage1_tank_ring_fasteners",
+          "type": "fastener",
+          "fastenerStandard": "NAS1351",
+          "diameterMm": 8,
+          "gripLengthMm": 16,
+          "edgeDistanceMm": 20,
+          "spacingPattern": "circular",
+          "quantity": 140,
+          "locationNote": "Circumferential flange joint"
+        }
+      ],
+      "primaryLoads": {
+        "axialLoadKn": 12500,
+        "radialLoadKn": 1800,
+        "torsionKnm": 420,
+        "pressureKpa": 5200,
+        "temperatureRangeC": [-183, 65]
+      }
+    },
+    {
+      "partId": "stage1_interstage",
+      "name": "Interstage Adapter",
+      "category": "interstage",
+      "stageRef": "stage1",
+      "materialId": "AL7050-T7451",
+      "manufacturingProcess": "composite_layup",
+      "geometry": {
+        "boundingBoxMm": {
+          "length": 3800,
+          "width": 3800,
+          "height": 3500
+        },
+        "wallThicknessMm": 4.5,
+        "minGaugeThicknessMm": 3.5,
+        "massBudgetKg": 1800,
+        "cgFromBaseMm": 1600,
+        "principalInertiasKgMm2": {
+          "ixx": 4.2e9,
+          "iyy": 4.2e9,
+          "izz": 8.5e9
+        },
+        "datum": [
+          {
+            "datumId": "interstage_mount",
+            "description": "Forward ring mount",
+            "reference": "A"
+          }
+        ],
+        "envelopeClearanceMm": 32
+      },
+      "tolerances": {
+        "system": "ISO_2768_mK",
+        "generalProfileMm": 0.3,
+        "holeToleranceMm": 0.1,
+        "shaftToleranceMm": 0.1,
+        "flatnessMm": 0.08,
+        "perpendicularityMmPer100": 0.3,
+        "concentricityMm": 0.12
+      },
+      "surfaceTreatments": [
+        {
+          "process": "primer_paint",
+          "standard": "MIL-PRF-23377",
+          "thicknessMicrons": 25
+        }
+      ],
+      "features": [
+        {
+          "featureId": "interstage_bolt_ring",
+          "type": "fastener",
+          "fastenerStandard": "NAS660",
+          "diameterMm": 12,
+          "gripLengthMm": 24,
+          "edgeDistanceMm": 30,
+          "spacingPattern": "single",
+          "quantity": 96,
+          "locationNote": "Interface ring to stage 2"
+        }
+      ],
+      "primaryLoads": {
+        "axialLoadKn": 6200,
+        "radialLoadKn": 750,
+        "torsionKnm": 280,
+        "pressureKpa": 0,
+        "temperatureRangeC": [-60, 85]
+      }
+    },
+    {
+      "partId": "stage2_tank",
+      "name": "Stage 2 Methane Tank",
+      "category": "tank",
+      "stageRef": "stage2",
+      "materialId": "IN625",
+      "manufacturingProcess": "welded_subassembly",
+      "geometry": {
+        "boundingBoxMm": {
+          "length": 3400,
+          "width": 3400,
+          "height": 7200
+        },
+        "wallThicknessMm": 6.5,
+        "minGaugeThicknessMm": 5.0,
+        "massBudgetKg": 4800,
+        "cgFromBaseMm": 3600,
+        "principalInertiasKgMm2": {
+          "ixx": 1.2e10,
+          "iyy": 1.2e10,
+          "izz": 2.3e10
+        },
+        "datum": [
+          {
+            "datumId": "stage2_tank_base",
+            "description": "Stage 2 tank base flange",
+            "reference": "A"
+          }
+        ],
+        "envelopeClearanceMm": 40
+      },
+      "tolerances": {
+        "system": "ASME_Y14_5M",
+        "generalProfileMm": 0.15,
+        "holeToleranceMm": 0.06,
+        "shaftToleranceMm": 0.06,
+        "flatnessMm": 0.04,
+        "perpendicularityMmPer100": 0.18,
+        "concentricityMm": 0.08
+      },
+      "surfaceTreatments": [
+        {
+          "process": "passivation",
+          "standard": "AMS2700",
+          "thicknessMicrons": 5
+        }
+      ],
+      "features": [
+        {
+          "featureId": "stage2_manway",
+          "type": "penetration",
+          "shape": "circular",
+          "sizeMm": 450,
+          "reinforcement": "doubler",
+          "pressureSeal": true
+        },
+        {
+          "featureId": "stage2_ring_fasteners",
+          "type": "fastener",
+          "fastenerStandard": "NAS1351",
+          "diameterMm": 10,
+          "gripLengthMm": 20,
+          "edgeDistanceMm": 24,
+          "spacingPattern": "circular",
+          "quantity": 112,
+          "locationNote": "Cylindrical barrel splice"
+        }
+      ],
+      "primaryLoads": {
+        "axialLoadKn": 4800,
+        "radialLoadKn": 520,
+        "torsionKnm": 210,
+        "pressureKpa": 4500,
+        "temperatureRangeC": [-162, 70]
+      }
+    }
+  ],
+  "analysisChecks": [
+    {
+      "checkId": "stage1_tank-thickness",
+      "type": "min_thickness",
+      "status": "pass",
+      "summary": "Wall thickness meets minimum gauge",
+      "relatedPartIds": ["stage1_tank"]
+    }
+  ],
+  "generatedAtIso": "2024-11-08T12:00:00Z"
+}

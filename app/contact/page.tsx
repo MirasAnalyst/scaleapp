@@ -252,8 +252,8 @@ export default function ContactPage() {
                           Support Email
                         </h4>
                         <p className="text-gray-600 dark:text-gray-400 text-sm">
-                          <a href="mailto:support@scaleapp.com" className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
-                            support@scaleapp.com
+                          <a href="mailto:miras.muratov@uscaleapp.com" className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+                            miras.muratov@uscaleapp.com
                           </a>
                         </p>
                       </div>

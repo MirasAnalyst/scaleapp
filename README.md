@@ -21,4 +21,14 @@ Tailwind CSS is used for styling, and Next Themes is used for dark mode. React I
 - Next Themes for dark mode
 - React Icons
 
+## Rocket CAD Pipeline
+
+The `/autocad/mechanical` route now generates rocket-grade CAD deliverables. The flow combines:
+
+- A strict `RocketSpec` Zod schema (`types/rocket.ts`) and OpenAI function-calling helper (`lib/openai.ts`) that returns validated JSON.
+- A BullMQ queue (`lib/queue/rocket-queue.ts`) plus worker (`workers/rocketWorker.ts`) that forwards specs to the FastAPI CAD microservice.
+- A Python CAD stack (`cad_worker/`) using CadQuery + FreeCAD TechDraw + ezdxf to output STEP, DXF, and PDF files along with sanity checks.
+
+Refer to `docs/rocket-cad-pipeline.md` for setup instructions, Docker Compose usage, environment variables, and the end-to-end test. Drafting standards and LLM guidance live at `docs/rocket-design-rules.md`.
+
 [!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/talhatahir)

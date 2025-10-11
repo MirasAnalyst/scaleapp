@@ -5,11 +5,19 @@ import {
   GitBranch, 
   MessageCircle,
   CheckCircle,
-  ArrowRight
+  ArrowRight,
+  TrendingUp
 } from "lucide-react";
 
 export default function WhyChooseUs() {
   const features = [
+    {
+      icon: TrendingUp,
+      title: "Empowers users to iterate processes, optimize industry performance, and increase production",
+      description: "Transform your operations with AI-driven insights that help you continuously improve processes, enhance efficiency, and boost productivity across your entire facility.",
+      color: "text-orange-600 dark:text-orange-400",
+      bgColor: "bg-orange-100 dark:bg-orange-900",
+    },
     {
       icon: Target,
       title: "Engineer-Level Precision Without Years of Training",

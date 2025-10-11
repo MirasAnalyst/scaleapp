@@ -1,0 +1,52 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  cad:
+    build:
+      context: .
+      dockerfile: cad_worker/Dockerfile
+    environment:
+      - UVICORN_HOST=0.0.0.0
+      - UVICORN_PORT=8001
+    ports:
+      - "8001:8001"
+
+  web:
+    image: node:20
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --hostname 0.0.0.0 --port 3006"
+    ports:
+      - "3006:3006"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - CAD_SERVICE_URL=http://cad:8001
+      - ROCKET_OUTPUT_DIR=/app/outputs
+    volumes:
+      - .:/app
+      - outputs:/app/outputs
+    depends_on:
+      - redis
+      - cad
+
+  worker:
+    image: node:20
+    working_dir: /app
+    command: sh -c "npm install && npx tsx workers/rocketWorker.ts"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - CAD_SERVICE_URL=http://cad:8001
+      - ROCKET_OUTPUT_DIR=/app/outputs
+    volumes:
+      - .:/app
+      - outputs:/app/outputs
+    depends_on:
+      - redis
+      - cad
+
+volumes:
+  outputs:

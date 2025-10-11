@@ -1,7 +1,15 @@
-import { AlertTriangle, Clock, DollarSign, Users, ArrowRight } from "lucide-react";
+import { AlertTriangle, Clock, DollarSign, Users, ArrowRight, TrendingUp } from "lucide-react";
 
 export default function ProblemsWeSolve() {
   const problems = [
+    {
+      icon: TrendingUp,
+      title: "Missed Opportunities",
+      description: "Production increase or power consumption decrease opportunities often remain unseen in facilities due to the limited ability of humans to detect them.",
+      color: "text-purple-600 dark:text-purple-400",
+      bgColor: "bg-purple-100 dark:bg-purple-900",
+      gradient: "from-purple-500 to-purple-600",
+    },
     {
       icon: Users,
       title: "Expertise Barrier",
