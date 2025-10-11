@@ -141,7 +141,7 @@ const SimpleFlowsheetBuilder = React.forwardRef<any, SimpleFlowsheetBuilderProps
     clearDiagram,
     exportDiagram,
     importDiagram
-  }), [nodes, connections]);
+  }), [addNode, exportDiagram, importDiagram, nodeTypes]);
 
   // Handle canvas click
   const handleCanvasClick = (e: React.MouseEvent) => {

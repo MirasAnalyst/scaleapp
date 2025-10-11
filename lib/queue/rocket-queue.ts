@@ -38,7 +38,6 @@ function getQueueOptions(): JobsOptions {
     backoff: { type: "exponential", delay: 10_000 },
     removeOnComplete: true,
     removeOnFail: false,
-    timeout: 10 * 60 * 1000,
   };
 }
 
@@ -56,7 +55,6 @@ export function getRocketQueueEvents() {
   if (!queueEvents) {
     queueEvents = new QueueEvents(ROCKET_QUEUE_NAME, {
       connection: getRedisConnection(),
-      defaultJobId: "rocket-events",
     });
   }
   return queueEvents;

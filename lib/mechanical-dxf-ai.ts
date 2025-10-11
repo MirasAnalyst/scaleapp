@@ -32,8 +32,8 @@ export function generateMechanicalDXF(spec: MechanicalSystemSpecType): string {
   dxf.addLayer("ELECTRICAL", Colors.Yellow, "DASHED");
   dxf.addLayer("CONTROL", Colors.Green, "DASHED");
   dxf.addLayer("TEXT", Colors.White, "CONTINUOUS");
-  dxf.addLayer("ANNOTATIONS", Colors.Gray, "CONTINUOUS");
-  dxf.addLayer("GRID", Colors.DarkGray, "DASHED");
+  dxf.addLayer("ANNOTATIONS", Colors.Cyan, "CONTINUOUS");
+  dxf.addLayer("GRID", Colors.Blue, "DASHED");
   dxf.addLayer("BORDER", Colors.White, "CONTINUOUS");
   
   // Draw border and title block
@@ -55,7 +55,7 @@ export function generateMechanicalDXF(spec: MechanicalSystemSpecType): string {
     { point: point2d(10, 30) },
     { point: point2d(10, 10) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
   
@@ -77,7 +77,7 @@ export function generateMechanicalDXF(spec: MechanicalSystemSpecType): string {
     { point: point2d(testPumpX - testPumpSize/2, testPumpY + testPumpSize/2) },
     { point: point2d(testPumpX - testPumpSize/2, testPumpY - testPumpSize/2) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
   
@@ -119,7 +119,7 @@ function drawBorder(dxf: DxfWriter, spec: MechanicalSystemSpecType) {
     { point: point2d(-margin, spec.layout.height + margin) },
     { point: point2d(-margin, -margin) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "BORDER"
   });
   
@@ -214,7 +214,7 @@ function drawComponent(dxf: DxfWriter, component: MechanicalComponent) {
         { point: point2d(x - width/2, y + height/2) },
         { point: point2d(x - width/2, y - height/2) }
       ], {
-        closed: true,
+        flags: LWPolylineFlags.Closed,
         layerName: "COMPONENTS"
       });
   }
@@ -310,7 +310,7 @@ function drawPumpSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(casingRight, casingBottom) },
     { point: point2d(casingLeft, casingBottom) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
 
@@ -324,7 +324,7 @@ function drawPumpSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(casingRight - wall, casingBottom + wall) },
     { point: point2d(casingLeft + wall, casingBottom + wall) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
 
@@ -367,7 +367,7 @@ function drawPumpSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x + shaftHalfWidth, shaftTop) },
     { point: point2d(x - shaftHalfWidth, shaftTop) },
     { point: point2d(x - shaftHalfWidth, shaftBottom) }
-  ], { closed: true, layerName: "COMPONENTS" });
+  ], { flags: LWPolylineFlags.Closed, layerName: "COMPONENTS" });
 
   // Shaft shoulders
   const shoulderWidth = shaftHalfWidth * 1.8;
@@ -377,7 +377,7 @@ function drawPumpSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x + shoulderWidth, casingTop + wall * 1.3) },
     { point: point2d(x - shoulderWidth, casingTop + wall * 1.3) },
     { point: point2d(x - shoulderWidth, casingTop + wall * 0.4) }
-  ], { closed: true, layerName: "COMPONENTS" });
+  ], { flags: LWPolylineFlags.Closed, layerName: "COMPONENTS" });
 
   // Mechanical seal assembly
   const sealTop = casingTop + 30 * scale;
@@ -388,7 +388,7 @@ function drawPumpSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x + shoulderWidth * 1.1, sealTop) },
     { point: point2d(x - shoulderWidth * 1.1, sealTop) },
     { point: point2d(x - shoulderWidth * 1.1, sealBottom) }
-  ], { closed: true, layerName: "COMPONENTS" });
+  ], { flags: LWPolylineFlags.Closed, layerName: "COMPONENTS" });
 
   // Seal springs
   const springCount = 6;
@@ -406,7 +406,7 @@ function drawPumpSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x + shaftHalfWidth * 1.2, casingTop + wall * 0.9) },
     { point: point2d(x - shaftHalfWidth * 1.2, casingTop + wall * 0.9) },
     { point: point2d(x - shaftHalfWidth * 1.2, casingTop + wall * 0.2) }
-  ], { closed: true, layerName: "COMPONENTS" });
+  ], { flags: LWPolylineFlags.Closed, layerName: "COMPONENTS" });
 
   // Bearings (drive end and non-drive end)
   const bearingWidth = 35 * scale;
@@ -423,7 +423,7 @@ function drawPumpSymbol(dxf: DxfWriter, component: MechanicalComponent) {
       { point: point2d(x + shoulderWidth * 1.4, top) },
       { point: point2d(x - shoulderWidth * 1.4, top) },
       { point: point2d(x - shoulderWidth * 1.4, bottom) }
-    ], { closed: true, layerName: "COMPONENTS" });
+    ], { flags: LWPolylineFlags.Closed, layerName: "COMPONENTS" });
 
     for (let i = 0; i < 4; i++) {
       const hatchY = bottom + ((top - bottom) / 4) * i;
@@ -445,7 +445,7 @@ function drawPumpSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x + couplingWidth, couplingBottom) },
     { point: point2d(x - couplingWidth, couplingBottom) },
     { point: point2d(x - couplingWidth, couplingTop) }
-  ], { closed: true, layerName: "ELECTRICAL" });
+  ], { flags: LWPolylineFlags.Closed, layerName: "ELECTRICAL" });
 
   dxf.addLWPolyline([
     { point: point2d(x - couplingWidth * 1.2, couplingTop - 10 * scale) },
@@ -453,7 +453,7 @@ function drawPumpSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x + couplingWidth * 1.2, couplingBottom + 10 * scale) },
     { point: point2d(x - couplingWidth * 1.2, couplingBottom + 10 * scale) },
     { point: point2d(x - couplingWidth * 1.2, couplingTop - 10 * scale) }
-  ], { closed: true, layerName: "ELECTRICAL" });
+  ], { flags: LWPolylineFlags.Closed, layerName: "ELECTRICAL" });
 
   // Baseplate & grout pockets
   const baseTop = casingBottom - 30 * scale;
@@ -467,7 +467,7 @@ function drawPumpSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(baseRight, baseTop) },
     { point: point2d(baseLeft, baseTop) },
     { point: point2d(baseLeft, baseBottom) }
-  ], { closed: true, layerName: "COMPONENTS" });
+  ], { flags: LWPolylineFlags.Closed, layerName: "COMPONENTS" });
 
   const anchorSpacing = baseWidth / 4;
   for (let i = -1; i <= 1; i += 2) {
@@ -486,7 +486,7 @@ function drawPumpSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(casingLeft - wall, suctionY + nozzleHeight / 2) },
     { point: point2d(casingLeft - nozzleLength, suctionY + nozzleHeight / 2) },
     { point: point2d(casingLeft - nozzleLength, suctionY - nozzleHeight / 2) }
-  ], { closed: true, layerName: "PIPING" });
+  ], { flags: LWPolylineFlags.Closed, layerName: "PIPING" });
 
   dxf.addCircle(point3d(casingLeft - nozzleLength - 12 * scale, suctionY, 0), nozzleHeight / 2, { layerName: "PIPING" });
 
@@ -498,7 +498,7 @@ function drawPumpSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(casingRight + nozzleLength, dischargeY + nozzleHeight / 2) },
     { point: point2d(casingRight - wall, dischargeY + nozzleHeight / 2) },
     { point: point2d(casingRight - wall, dischargeY - nozzleHeight / 2) }
-  ], { closed: true, layerName: "PIPING" });
+  ], { flags: LWPolylineFlags.Closed, layerName: "PIPING" });
   dxf.addCircle(point3d(casingRight + nozzleLength + 12 * scale, dischargeY, 0), nozzleHeight / 2, { layerName: "PIPING" });
 
   // Auto-generated callouts
@@ -616,7 +616,7 @@ function drawHeatExchangerSymbol(dxf: DxfWriter, component: MechanicalComponent)
     { point: point2d(x - width/2, y + height/2) },
     { point: point2d(x - width/2, y - height/2) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
   
@@ -690,7 +690,7 @@ function drawHeatExchangerSymbol(dxf: DxfWriter, component: MechanicalComponent)
     { point: point2d(x - width/2 - 5, y - height/2 - 5) },
     { point: point2d(x - width/2 - 5, y - height/2 - 10) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
   dxf.addLWPolyline([
@@ -700,7 +700,7 @@ function drawHeatExchangerSymbol(dxf: DxfWriter, component: MechanicalComponent)
     { point: point2d(x + width/2 - 5, y - height/2 - 5) },
     { point: point2d(x + width/2 - 5, y - height/2 - 10) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
 }
@@ -719,7 +719,7 @@ function drawValveSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x - width/2, y + height/2) },
     { point: point2d(x - width/2, y - height/2) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
   
@@ -736,7 +736,7 @@ function drawValveSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x - width * 0.1, y + height * 0.1) },
     { point: point2d(x - width * 0.1, y - height * 0.1) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
   
@@ -753,7 +753,7 @@ function drawValveSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x - width/3, y + height/2 + 15) },
     { point: point2d(x - width/3, y + height/2) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
   
@@ -770,7 +770,7 @@ function drawValveSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x - 8, y + height/2 + 40) },
     { point: point2d(x - 8, y + height/2 + 20) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "CONTROL"
   });
   
@@ -815,7 +815,7 @@ function drawTankSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x - width/2, y + height/2) },
     { point: point2d(x - width/2, y - height/2) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
   
@@ -905,7 +905,7 @@ function drawTankSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x - width/2 - 8, y + height/2 + 15) },
     { point: point2d(x - width/2 - 8, y + height/2 + 3) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
   dxf.addLWPolyline([
@@ -915,7 +915,7 @@ function drawTankSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x + width/2 - 8, y + height/2 + 15) },
     { point: point2d(x + width/2 - 8, y + height/2 + 3) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
   
@@ -948,7 +948,7 @@ function drawPressureVesselSymbol(dxf: DxfWriter, component: MechanicalComponent
     { point: point2d(x - width/2, y + height/2) },
     { point: point2d(x - width/2, y - height/2) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
   
@@ -975,7 +975,7 @@ function drawTurbineSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x - width/2, y + height/2) },
     { point: point2d(x - width/2, y - height/2) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
   
@@ -1005,7 +1005,7 @@ function drawMotorSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x - width/2, y + height/2) },
     { point: point2d(x - width/2, y - height/2) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
   
@@ -1033,7 +1033,7 @@ function drawGeneratorSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x + width / 2, y + height / 2) },
     { point: point2d(x - width / 2, y + height / 2) },
     { point: point2d(x - width / 2, y - height / 2) }
-  ], { closed: true, layerName: "COMPONENTS" });
+  ], { flags: LWPolylineFlags.Closed, layerName: "COMPONENTS" });
 
   // Rotor and stator laminations
   dxf.addCircle(point3d(x, y, 0), height * 0.25, { layerName: "COMPONENTS" });
@@ -1053,7 +1053,7 @@ function drawGeneratorSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x + width / 2 + height * 0.25, y - height * 0.1) },
     { point: point2d(x + width / 2, y - height * 0.1) },
     { point: point2d(x + width / 2, y + height * 0.1) }
-  ], { closed: true, layerName: "ELECTRICAL" });
+  ], { flags: LWPolylineFlags.Closed, layerName: "ELECTRICAL" });
 
   // Base frame
   dxf.addLWPolyline([
@@ -1062,7 +1062,7 @@ function drawGeneratorSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x + width / 2 + 10, y - height / 2 - 5) },
     { point: point2d(x - width / 2 - 10, y - height / 2 - 5) },
     { point: point2d(x - width / 2 - 10, y - height / 2 - 15) }
-  ], { closed: true, layerName: "COMPONENTS" });
+  ], { flags: LWPolylineFlags.Closed, layerName: "COMPONENTS" });
 }
 
 function drawSeparatorSymbol(dxf: DxfWriter, component: MechanicalComponent) {
@@ -1078,7 +1078,7 @@ function drawSeparatorSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x + width / 2, y + height / 2) },
     { point: point2d(x - width / 2, y + height / 2) },
     { point: point2d(x - width / 2, y - height / 2) }
-  ], { closed: true, layerName: "COMPONENTS" });
+  ], { flags: LWPolylineFlags.Closed, layerName: "COMPONENTS" });
 
   // Mist eliminator pad
   const padTop = y + height * 0.25;
@@ -1088,7 +1088,7 @@ function drawSeparatorSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x + width / 2, padTop - height * 0.1) },
     { point: point2d(x - width / 2, padTop - height * 0.1) },
     { point: point2d(x - width / 2, padTop) }
-  ], { closed: true, layerName: "COMPONENTS" });
+  ], { flags: LWPolylineFlags.Closed, layerName: "COMPONENTS" });
 
   for (let i = 0; i <= 6; i++) {
     const hx = x - width / 2 + (width / 6) * i;
@@ -1122,7 +1122,7 @@ function drawReactorSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x + width / 2, y + height / 2) },
     { point: point2d(x - width / 2, y + height / 2) },
     { point: point2d(x - width / 2, y - height / 2) }
-  ], { closed: true, layerName: "COMPONENTS" });
+  ], { flags: LWPolylineFlags.Closed, layerName: "COMPONENTS" });
 
   // Internal coil
   for (let i = 0; i < 5; i++) {
@@ -1135,7 +1135,7 @@ function drawReactorSymbol(dxf: DxfWriter, component: MechanicalComponent) {
       { point: point2d(x + coilWidth, coilY + coilHeight / 2) },
       { point: point2d(x - coilWidth, coilY + coilHeight / 2) },
       { point: point2d(x - coilWidth, coilY - coilHeight / 2) }
-    ], { closed: true, layerName: "COMPONENTS" });
+    ], { flags: LWPolylineFlags.Closed, layerName: "COMPONENTS" });
     dxf.addLine(point3d(x - coilWidth, coilY, 0), point3d(x + coilWidth, coilY, 0), { layerName: "COMPONENTS" });
   }
 
@@ -1171,7 +1171,7 @@ function drawFilterSymbol(dxf: DxfWriter, component: MechanicalComponent) {
     { point: point2d(x - width/2, y + height/2) },
     { point: point2d(x - width/2, y - height/2) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
   
@@ -1230,7 +1230,7 @@ function drawLeaderCallout(dxf: DxfWriter, detail: CalloutDetail) {
     { point: point2d(right.x, right.y) },
     { point: point2d(target.x, target.y) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "ANNOTATIONS"
   });
 

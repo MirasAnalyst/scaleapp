@@ -1,4 +1,4 @@
-import { DxfWriter, Units, point2d, point3d } from "@tarikjabiri/dxf";
+import { DxfWriter, Units, LWPolylineFlags, point2d, point3d } from "@tarikjabiri/dxf";
 
 /**
  * Simple mechanical DXF generator for testing
@@ -32,7 +32,7 @@ export function generateSimpleMechanicalDXF(): string {
     { point: point2d(0, 400) },
     { point: point2d(0, 0) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "BORDER"
   });
   
@@ -49,7 +49,7 @@ export function generateSimpleMechanicalDXF(): string {
     { point: point2d(pumpX - pumpSize/2, pumpY + pumpSize/2) },
     { point: point2d(pumpX - pumpSize/2, pumpY - pumpSize/2) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
   
@@ -77,7 +77,7 @@ export function generateSimpleMechanicalDXF(): string {
     { point: point2d(tankX - tankWidth/2, tankY + tankHeight/2) },
     { point: point2d(tankX - tankWidth/2, tankY - tankHeight/2) }
   ], {
-    closed: true,
+    flags: LWPolylineFlags.Closed,
     layerName: "COMPONENTS"
   });
   

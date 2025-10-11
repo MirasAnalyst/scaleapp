@@ -175,7 +175,7 @@ export function generateFallbackSpec(prompt: string): MechanicalSystemSpecType {
   return {
     project: {
       name: "Fallback Mechanical System",
-      systemType: "custom_system",
+      systemType: "process_plant",
       description: "Fallback mechanical system specification",
       units: "metric"
     },
