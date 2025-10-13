@@ -8,13 +8,24 @@ import "styles/globals.css";
 export const metadata: Metadata = {
   title: "ScaleApp",
   description: "ScaleApp",
+  icons: {
+    icon: [
+      { url: "/favicon.svg?v=1", type: "image/svg+xml" },
+      { url: "/favicon.ico?v=1", type: "image/x-icon" },
+    ],
+    shortcut: "/favicon.svg?v=1",
+    apple: "/favicon.svg?v=1",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+        <link rel="icon" href="/favicon.svg?v=1" type="image/svg+xml" />
+        <link rel="icon" href="/favicon.ico?v=1" type="image/x-icon" />
+        <link rel="shortcut icon" href="/favicon.svg?v=1" />
+        <link rel="apple-touch-icon" href="/favicon.svg?v=1" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
