@@ -216,7 +216,7 @@ export async function POST(request: NextRequest) {
     
     🔗 CONNECTIVITY REQUIREMENTS (MANDATORY):
     - EVERY piece of equipment MUST be connected to at least one other piece of equipment via stream lines
-    - NO equipment should be isolated or disconnected from the main process flow
+    - NO equipment should be completely isolated (no connections at all)
     - Create a COMPLETE and CONTINUOUS process flow from feed to final products
     - All equipment must be part of the main process pathway - no standalone units
     - Ensure that all equipment/unit operations are properly connected with process stream lines, in the same way they would be interconnected in an Aspen HYSYS process flowsheet, so the result forms a complete and continuous process flow
@@ -224,10 +224,12 @@ export async function POST(request: NextRequest) {
     CRITICAL: Never create edges that connect a node to itself (source and target cannot be the same node). All edges must connect different equipment units.
     IMPORTANT: For separation processes, create separate equipment units for each product stream (e.g., separate pumps for gas, oil, water products from a separator).
     
-    🚨 ABSOLUTE RULE: NO ISOLATED EQUIPMENT ALLOWED
+    🚨 ABSOLUTE RULE: NO COMPLETELY ISOLATED EQUIPMENT ALLOWED
     - If you create a heat exchanger, pump, compressor, separator, or any equipment, it MUST be connected
-    - Every piece of equipment must have at least one inlet connection AND one outlet connection
-    - Equipment without connections will cause the generation to fail
+    - Every piece of equipment must have at least one connection (incoming OR outgoing)
+    - Equipment with NO connections at all will cause the generation to fail
+    - VALID PATTERNS: Feed equipment (only outgoing), Product equipment (only incoming), Process equipment (both incoming and outgoing)
+    - INVALID PATTERN: Equipment with no connections at all
     - Either connect all equipment to the process flow or don't create it
     
     Include relevant process parameters in node data.
@@ -244,8 +246,11 @@ export async function POST(request: NextRequest) {
     - Heat exchangers hot/cold sides not crossed
     - Keep main process streams only (no utilities or signal lines)
     - Streams connect at LOGICALLY CORRECT physical locations (top/bottom/sides)
-    - ALL equipment is connected to at least one other equipment (NO isolated units)
+    - ALL equipment has at least one connection (NO completely isolated units)
     - Process flow is COMPLETE and CONTINUOUS from feed to products
+    - Feed equipment can have only outgoing connections (VALID)
+    - Product equipment can have only incoming connections (VALID)
+    - Process equipment should have both incoming and outgoing connections (VALID)
 
     📋 EXAMPLE (three-phase separation with proper spacing):
     {
@@ -518,17 +523,48 @@ export async function POST(request: NextRequest) {
 
     // Check for isolated equipment (equipment not connected to any other equipment)
     const connectedNodes = new Set<string>();
+    const nodesWithIncomingConnections = new Set<string>();
+    const nodesWithOutgoingConnections = new Set<string>();
+    
     flowsheetData.edges.forEach(edge => {
       connectedNodes.add(edge.source);
       connectedNodes.add(edge.target);
+      nodesWithOutgoingConnections.add(edge.source);
+      nodesWithIncomingConnections.add(edge.target);
     });
     
-    const isolatedNodes = flowsheetData.nodes.filter(node => !connectedNodes.has(node.id));
-    if (isolatedNodes.length > 0) {
+    // Find truly isolated nodes (not connected at all)
+    const trulyIsolatedNodes = flowsheetData.nodes.filter(node => !connectedNodes.has(node.id));
+    
+    // Find nodes that might be feed or product equipment (only incoming or only outgoing)
+    const potentialFeedNodes = flowsheetData.nodes.filter(node => 
+      connectedNodes.has(node.id) && 
+      nodesWithOutgoingConnections.has(node.id) && 
+      !nodesWithIncomingConnections.has(node.id)
+    );
+    
+    const potentialProductNodes = flowsheetData.nodes.filter(node => 
+      connectedNodes.has(node.id) && 
+      nodesWithIncomingConnections.has(node.id) && 
+      !nodesWithOutgoingConnections.has(node.id)
+    );
+    
+    // Log connectivity analysis for debugging
+    console.log('Connectivity Analysis:', {
+      totalNodes: flowsheetData.nodes.length,
+      totalEdges: flowsheetData.edges.length,
+      trulyIsolatedNodes: trulyIsolatedNodes.map(n => n.id),
+      potentialFeedNodes: potentialFeedNodes.map(n => n.id),
+      potentialProductNodes: potentialProductNodes.map(n => n.id),
+      connectedNodes: Array.from(connectedNodes)
+    });
+
+    // Only flag as error if there are truly isolated nodes (not connected at all)
+    if (trulyIsolatedNodes.length > 0) {
       // If this is a retry attempt, return error immediately
       if (retryCount > 0) {
         return NextResponse.json(
-          { error: `Isolated equipment found after retry: ${isolatedNodes.map(n => n.id).join(', ')}. All equipment must be connected to the main process flow.` },
+          { error: `Isolated equipment found after retry: ${trulyIsolatedNodes.map(n => n.id).join(', ')}. All equipment must be connected to the main process flow.` },
           { status: 500 }
         );
       }
@@ -539,8 +575,8 @@ export async function POST(request: NextRequest) {
 🚨 CRITICAL ERROR: The previous attempt created isolated equipment that is not connected to the main process flow. You MUST follow these rules EXACTLY:
 
 🚨 ABSOLUTE RULE: ALL EQUIPMENT MUST BE CONNECTED
-- Every piece of equipment MUST be connected to at least one other piece of equipment
-- NO equipment can exist in isolation
+- Every piece of equipment MUST be connected to at least one other piece of equipment via edges
+- NO equipment can exist in complete isolation (no connections at all)
 - If you create equipment, you MUST connect it to the process flow
 - Either connect isolated equipment to the nearest logical process path or remove it
 
@@ -552,13 +588,19 @@ export async function POST(request: NextRequest) {
 - Every column must have feed inlet and product outlets connected
 - Every tank must have inlet and outlet connections (unless it's a final product tank)
 
+📋 VALID CONNECTIVITY PATTERNS:
+- Feed equipment: Only outgoing connections (no incoming connections) - THIS IS VALID
+- Product equipment: Only incoming connections (no outgoing connections) - THIS IS VALID
+- Process equipment: Both incoming and outgoing connections - THIS IS VALID
+- Isolated equipment: No connections at all - THIS IS INVALID
+
 📋 EXAMPLE OF CORRECT CONNECTIVITY:
 - separator3p: feed → separator → gas/oil/water → pumps/compressors
 - heat exchanger: hot stream → exchanger → cooled stream
 - column: feed → column → overhead/bottoms → next equipment
 - pump: suction → pump → discharge → next equipment
 
-🚨 FINAL WARNING: If you create any isolated equipment, the generation will fail. Every piece of equipment must be part of the continuous process flow.`;
+🚨 FINAL WARNING: If you create any equipment with NO connections at all, the generation will fail. Every piece of equipment must be part of the continuous process flow.`;
 
       // Recursive call with retry count
       const retryRequest = new NextRequest(request.url, {
