@@ -135,6 +135,36 @@ const calculateLabelDimensions = (text: string, maxWidth: number, minWidth: numb
   };
 };
 
+const clampPercent = (value: number) => Math.min(90, Math.max(10, value));
+
+const extractStageValue = (portId: string) => {
+  const match = portId.match(/(?:stage|sidedraw)-(\d+)/i);
+  if (match) {
+    const stage = parseInt(match[1], 10);
+    if (!Number.isNaN(stage)) {
+      return stage;
+    }
+  }
+  return undefined;
+};
+
+const computeColumnHandleTop = (portId: string, index: number, total: number) => {
+  if (/top/.test(portId)) {
+    return 12;
+  }
+  if (/bottom/.test(portId)) {
+    return 88;
+  }
+  const stage = extractStageValue(portId);
+  if (stage !== undefined) {
+    return clampPercent((stage / 40) * 95);
+  }
+  if (/feed/.test(portId)) {
+    return clampPercent(40 + index * 6);
+  }
+  return clampPercent(35 + (total > 1 ? (index / Math.max(1, total - 1)) * 30 : 0));
+};
+
 // ────────────────────────────────────────────────────────────────────────────────
 // CORE VESSELS / TANKS
 // ────────────────────────────────────────────────────────────────────────────────
@@ -142,6 +172,19 @@ const DistillationColumnNode = ({ id, data }: { id: string; data: any }) => {
   const { width = 80, height = 220, fillLevel = 0.5, label = "Column" } = data || {};
   const level = clamp01(fillLevel);
   const pad = 6, innerW = width - pad * 2, innerH = height - pad * 2, fillH = innerH * level;
+  const defaultInlets = new Set([
+    "reflux-top",
+    "feed-stage-6",
+    "feed-stage-8",
+    "feed-stage-10",
+    "feed-stage-12",
+    "feed-stage-18",
+    "feed-left",
+    "in-left",
+  ]);
+  const defaultOutlets = new Set(["overhead-top", "bottoms-bottom"]);
+  const dynamicInlets = (data?.ports?.inlets || []).filter((portId: string) => !defaultInlets.has(portId));
+  const dynamicOutlets = (data?.ports?.outlets || []).filter((portId: string) => !defaultOutlets.has(portId));
   
   // Calculate dynamic label dimensions with text wrapping
   const maxLabelWidth = Math.min(200, width - 10);
@@ -198,6 +241,85 @@ const DistillationColumnNode = ({ id, data }: { id: string; data: any }) => {
       <Handle type="target" position={Position.Right} id="in-left" style={{ top: "35%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
       <Handle type="source" position={Position.Top} id="overhead-top" style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }} />
       <Handle type="source" position={Position.Bottom} id="bottoms-bottom" style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }} />
+      {dynamicInlets.map((portId: string, index: number) => {
+        const top = computeColumnHandleTop(portId, index, dynamicInlets.length);
+        const isTop = /top/.test(portId);
+        const isBottom = /bottom/.test(portId);
+        const position = portId.includes("left") ? Position.Left : Position.Right;
+
+        if (isTop) {
+          return (
+            <Handle
+              key={`${id}-dyn-in-${portId}`}
+              type="target"
+              position={Position.Top}
+              id={portId}
+              style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}
+            />
+          );
+        }
+
+        if (isBottom) {
+          return (
+            <Handle
+              key={`${id}-dyn-in-${portId}`}
+              type="target"
+              position={Position.Bottom}
+              id={portId}
+              style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}
+            />
+          );
+        }
+
+        return (
+          <Handle
+            key={`${id}-dyn-in-${portId}`}
+            type="target"
+            position={position}
+            id={portId}
+            style={{ top: `${top}%`, transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}
+          />
+        );
+      })}
+      {dynamicOutlets.map((portId: string, index: number) => {
+        const top = computeColumnHandleTop(portId, index, dynamicOutlets.length);
+        const isTop = /top/.test(portId);
+        const isBottom = /bottom/.test(portId);
+
+        if (isTop) {
+          return (
+            <Handle
+              key={`${id}-dyn-out-${portId}`}
+              type="source"
+              position={Position.Top}
+              id={portId}
+              style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}
+            />
+          );
+        }
+
+        if (isBottom) {
+          return (
+            <Handle
+              key={`${id}-dyn-out-${portId}`}
+              type="source"
+              position={Position.Bottom}
+              id={portId}
+              style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}
+            />
+          );
+        }
+
+        return (
+          <Handle
+            key={`${id}-dyn-out-${portId}`}
+            type="source"
+            position={Position.Right}
+            id={portId}
+            style={{ top: `${top}%`, transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}
+          />
+        );
+      })}
     </div>
   );
 };
@@ -238,14 +360,38 @@ const FlashDrumNode = ({ id, data }) => {
           </text>
         ))}
       </svg>
-      <Handle type="target" position={Position.Left} id="feed" style={{ top: "50%" }} />
-      <Handle type="source" position={Position.Top} id="vapor" />
-      <Handle type="source" position={Position.Bottom} id="liquid" />
+      {["feed-left", "inlet", "in", "feed"].map(handleId => (
+        <Handle
+          key={`${id}-flash-${handleId}`}
+          type="target"
+          position={Position.Left}
+          id={handleId}
+          style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}
+        />
+      ))}
+      {["vapor-top", "gas-top", "gas", "vapor", "outlet"].map(handleId => (
+        <Handle
+          key={`${id}-flash-${handleId}`}
+          type="source"
+          position={Position.Top}
+          id={handleId}
+          style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}
+        />
+      ))}
+      {["liquid-bottom", "bottoms", "liquid", "outlet-bottom"].map(handleId => (
+        <Handle
+          key={`${id}-flash-${handleId}`}
+          type="source"
+          position={Position.Bottom}
+          id={handleId}
+          style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}
+        />
+      ))}
     </div>
   );
 };
 
-const SeparatorHorizontalNode = ({ data }) => {
+const SeparatorHorizontalNode = ({ id, data }) => {
   // 2‑phase horizontal separator
   const { width = 180, height = 70, label = "Separator" } = data || {};
   
@@ -275,14 +421,38 @@ const SeparatorHorizontalNode = ({ data }) => {
           </text>
         ))}
       </svg>
-      <Handle type="target" position={Position.Left} id="feed" />
-      <Handle type="source" position={Position.Top} id="gas" />
-      <Handle type="source" position={Position.Right} id="liquid" />
+      {["feed-left", "inlet", "in", "feed"].map(handleId => (
+        <Handle
+          key={`${id}-2ph-${handleId}`}
+          type="target"
+          position={Position.Left}
+          id={handleId}
+          style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}
+        />
+      ))}
+      {["vapor-top", "gas-top", "gas", "vapor", "outlet"].map(handleId => (
+        <Handle
+          key={`${id}-2ph-${handleId}`}
+          type="source"
+          position={Position.Top}
+          id={handleId}
+          style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}
+        />
+      ))}
+      {["liquid-bottom", "bottoms", "liquid", "outlet-bottom"].map(handleId => (
+        <Handle
+          key={`${id}-2ph-${handleId}`}
+          type="source"
+          position={Position.Bottom}
+          id={handleId}
+          style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}
+        />
+      ))}
     </div>
   );
 };
 
-const Separator3PhaseNode = ({ data }) => {
+const Separator3PhaseNode = ({ id, data }) => {
   // 3‑phase horizontal separator (gas, oil, water)
   const { width = 200, height = 80, label = "3‑Phase Sep" } = data || {};
   return (
@@ -295,10 +465,42 @@ const Separator3PhaseNode = ({ data }) => {
         <line x1={width*0.65} y1={height*0.25} x2={width*0.65} y2={height*0.75} stroke="#000" opacity=".3" />
         <text x={width/2} y={height/2+5} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
       </svg>
-      <Handle type="target" position={Position.Left} id="feed-left" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
-      <Handle type="source" position={Position.Top} id="gas-top" style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }} />
-      <Handle type="source" position={Position.Right} id="oil-right" style={{ top: "55%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }} />
-      <Handle type="source" position={Position.Bottom} id="water-bottom" style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }} />
+      {["feed-left", "inlet", "in", "feed"].map(handleId => (
+        <Handle
+          key={`${id}-3ph-${handleId}`}
+          type="target"
+          position={Position.Left}
+          id={handleId}
+          style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}
+        />
+      ))}
+      {["gas-top", "vapor-top", "gas", "vapor"].map(handleId => (
+        <Handle
+          key={`${id}-3ph-${handleId}`}
+          type="source"
+          position={Position.Top}
+          id={handleId}
+          style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}
+        />
+      ))}
+      {["oil-right", "liquid-right", "oil", "light-liquid"].map(handleId => (
+        <Handle
+          key={`${id}-3ph-${handleId}`}
+          type="source"
+          position={Position.Right}
+          id={handleId}
+          style={{ top: "55%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}
+        />
+      ))}
+      {["water-bottom", "liquid-bottom", "water", "heavy-liquid", "bottoms"].map(handleId => (
+        <Handle
+          key={`${id}-3ph-${handleId}`}
+          type="source"
+          position={Position.Bottom}
+          id={handleId}
+          style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}
+        />
+      ))}
     </div>
   );
 };
@@ -336,8 +538,18 @@ const TankNode = ({ id, data }) => {
           </text>
         ))}
       </svg>
-      <Handle type="target" position={Position.Left} id="in" />
-      <Handle type="source" position={Position.Right} id="out" />
+      <Handle
+        type="target"
+        position={Position.Top}
+        id="in-top"
+        style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="out-bottom"
+        style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}
+      />
     </div>
   );
 };
@@ -345,7 +557,7 @@ const TankNode = ({ id, data }) => {
 // ────────────────────────────────────────────────────────────────────────────────
 // HEAT TRANSFER
 // ────────────────────────────────────────────────────────────────────────────────
-const HeaterCoolerNode = ({ data }) => {
+const HeaterCoolerNode = ({ id, data }) => {
   // Generic heater/cooler block; use label to distinguish (Heater/Cooler)
   const { width = 120, height = 70, label = "Heater" } = data || {};
   
@@ -374,15 +586,47 @@ const HeaterCoolerNode = ({ data }) => {
           </text>
         ))}
       </svg>
-      <Handle type="target" position={Position.Left} />
-      <Handle type="source" position={Position.Right} />
-      {/* Energy handle (top) for duty */}
-      <Handle type="target" position={Position.Top} id="Qin" />
+      {["hot-in-left", "inlet", "in", "feed", "process-in"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="target"
+          position={Position.Left}
+          id={handleId}
+          style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#F59E0B", border: "2px solid #fff" }}
+        />
+      ))}
+      {["hot-out-right", "outlet", "out", "product", "process-out"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="source"
+          position={Position.Right}
+          id={handleId}
+          style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#F59E0B", border: "2px solid #fff" }}
+        />
+      ))}
+      {["cold-in-bottom", "utility-in", "cold-inlet"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="target"
+          position={Position.Bottom}
+          id={handleId}
+          style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#3B82F6", border: "2px solid #fff" }}
+        />
+      ))}
+      {["cold-out-top", "utility-out", "cold-outlet"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="source"
+          position={Position.Top}
+          id={handleId}
+          style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#3B82F6", border: "2px solid #fff" }}
+        />
+      ))}
     </div>
   );
 };
 
-const ShellTubeHXNode = ({ data }) => {
+const ShellTubeHXNode = ({ id, data }) => {
   const { width = 140, height = 80, label = "Shell & Tube HX" } = data || {};
   
   // Calculate dynamic label dimensions
@@ -404,15 +648,47 @@ const ShellTubeHXNode = ({ data }) => {
         <rect x={labelX} y={labelY} width={labelWidth} height={labelHeight} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
         <text x={width/2} y={labelY + labelHeight/2 + 4} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
       </svg>
-      <Handle type="target" position={Position.Left} id="shellIn" />
-      <Handle type="source" position={Position.Right} id="shellOut" />
-      <Handle type="target" position={Position.Top} id="tubeIn" />
-      <Handle type="source" position={Position.Bottom} id="tubeOut" />
+      {["hot-in-left", "inlet", "in", "feed", "shell-inlet", "process-in"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="target"
+          position={Position.Left}
+          id={handleId}
+          style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#F59E0B", border: "2px solid #fff" }}
+        />
+      ))}
+      {["hot-out-right", "outlet", "out", "shell-outlet", "process-out"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="source"
+          position={Position.Right}
+          id={handleId}
+          style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#F59E0B", border: "2px solid #fff" }}
+        />
+      ))}
+      {["cold-in-bottom", "tube-inlet", "cold-inlet", "utility-in"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="target"
+          position={Position.Bottom}
+          id={handleId}
+          style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#3B82F6", border: "2px solid #fff" }}
+        />
+      ))}
+      {["cold-out-top", "tube-outlet", "cold-outlet", "utility-out"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="source"
+          position={Position.Top}
+          id={handleId}
+          style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#3B82F6", border: "2px solid #fff" }}
+        />
+      ))}
     </div>
   );
 };
 
-const AirCoolerNode = ({ data }) => {
+const AirCoolerNode = ({ id, data }) => {
   const { width = 160, height = 90, label = "Air Cooler" } = data || {};
   
   // Calculate dynamic label dimensions
@@ -436,8 +712,42 @@ const AirCoolerNode = ({ data }) => {
         <rect x={labelX} y={labelY} width={labelWidth} height={labelHeight} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
         <text x={width/2} y={labelY + labelHeight/2 + 4} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
       </svg>
-      <Handle type="target" position={Position.Left} />
-      <Handle type="source" position={Position.Right} />
+      {["hot-in-left", "inlet", "in", "feed", "process-in"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="target"
+          position={Position.Left}
+          id={handleId}
+          style={{ top: "55%", transform: "translateY(-50%)", width: 12, height: 12, background: "#F59E0B", border: "2px solid #fff" }}
+        />
+      ))}
+      {["hot-out-right", "outlet", "out", "process-out"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="source"
+          position={Position.Right}
+          id={handleId}
+          style={{ top: "55%", transform: "translateY(-50%)", width: 12, height: 12, background: "#F59E0B", border: "2px solid #fff" }}
+        />
+      ))}
+      {["cold-in-bottom", "utility-in", "cold-inlet"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="target"
+          position={Position.Bottom}
+          id={handleId}
+          style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#3B82F6", border: "2px solid #fff" }}
+        />
+      ))}
+      {["cold-out-top", "utility-out", "cold-outlet"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="source"
+          position={Position.Top}
+          id={handleId}
+          style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#3B82F6", border: "2px solid #fff" }}
+        />
+      ))}
     </div>
   );
 };
@@ -473,8 +783,18 @@ const CSTRNode = ({ id, data }) => {
         <rect x={labelX} y={labelY} width={labelWidth} height={labelHeight} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
         <text x={width/2} y={labelY + labelHeight/2 + 4} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
       </svg>
-      <Handle type="target" position={Position.Left} />
-      <Handle type="source" position={Position.Right} />
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="in-left"
+        style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="out-right"
+        style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}
+      />
     </div>
   );
 };
@@ -497,8 +817,18 @@ const PFRNode = ({ data }) => {
         <rect x={labelX} y={labelY} width={labelWidth} height={labelHeight} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
         <text x={width/2} y={labelY + labelHeight/2 + 4} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
       </svg>
-      <Handle type="target" position={Position.Left} />
-      <Handle type="source" position={Position.Right} />
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="in-left"
+        style={{ top: "55%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="out-right"
+        style={{ top: "55%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}
+      />
     </div>
   );
 };
@@ -594,8 +924,18 @@ const TurbineNode = ({ data }) => {
         minWidth: labelWidth,
         textAlign: "center"
       }}>{label}</div>
-      <Handle type="target" position={Position.Left} />
-      <Handle type="source" position={Position.Right} />
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="in-left"
+        style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="out-right"
+        style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}
+      />
     </div>
   );
 };
@@ -616,8 +956,8 @@ const ValveNode = ({ data }) => {
         </g>
       </svg>
       <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
-      <Handle type="target" position={Position.Left} />
-      <Handle type="source" position={Position.Right} />
+      <Handle type="target" position={Position.Left} id="in-left" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
+      <Handle type="source" position={Position.Right} id="out-right" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }} />
     </div>
   );
 };
@@ -631,9 +971,10 @@ const MixerNode = ({ data }) => {
         <circle cx="35" cy="30" r="14" fill="#fff" stroke="#000" />
       </svg>
       <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
-      <Handle type="target" position={Position.Left} id="in1" style={{ top: "30%" }} />
-      <Handle type="target" position={Position.Left} id="in2" style={{ top: "70%" }} />
-      <Handle type="source" position={Position.Right} id="out" />
+      <Handle type="target" position={Position.Left} id="in-1-left" style={{ top: "25%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
+      <Handle type="target" position={Position.Left} id="in-2-left" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
+      <Handle type="target" position={Position.Left} id="in-3-left" style={{ top: "75%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
+      <Handle type="source" position={Position.Right} id="out-right" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }} />
     </div>
   );
 };
@@ -647,9 +988,10 @@ const SplitterNode = ({ data }) => {
         <path d="M40 10 L40 30 M40 30 L15 50 M40 30 L65 50" stroke="#000" fill="none" strokeWidth="3" />
       </svg>
       <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
-      <Handle type="target" position={Position.Left} id="in" />
-      <Handle type="source" position={Position.Right} id="out1" style={{ top: "30%" }} />
-      <Handle type="source" position={Position.Right} id="out2" style={{ top: "70%" }} />
+      <Handle type="target" position={Position.Left} id="in-left" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
+      <Handle type="source" position={Position.Right} id="out-1-right" style={{ top: "25%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }} />
+      <Handle type="source" position={Position.Right} id="out-2-right" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }} />
+      <Handle type="source" position={Position.Right} id="out-3-right" style={{ top: "75%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }} />
     </div>
   );
 };
@@ -668,9 +1010,24 @@ const BoilerNode = ({ data }) => {
         </g>
       </svg>
       <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
-      <Handle type="target" position={Position.Left} />
-      <Handle type="source" position={Position.Right} />
-      <Handle type="target" position={Position.Bottom} id="Qin" />
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="in-left"
+        style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="out-right"
+        style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}
+      />
+      <Handle
+        type="target"
+        position={Position.Bottom}
+        id="Qin"
+        style={{ left: "50%", transform: "translateX(-50%)", width: 10, height: 10, background: "#F97316", border: "2px solid #fff" }}
+      />
     </div>
   );
 };
@@ -686,9 +1043,36 @@ const CondenserNode = ({ data }) => {
         </g>
       </svg>
       <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
-      <Handle type="target" position={Position.Left} />
-      <Handle type="source" position={Position.Right} />
-      <Handle type="source" position={Position.Top} id="Qout" />
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="hot-in-left"
+        style={{ top: "55%", transform: "translateY(-50%)", width: 12, height: 12, background: "#F59E0B", border: "2px solid #fff" }}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="hot-out-right"
+        style={{ top: "55%", transform: "translateY(-50%)", width: 12, height: 12, background: "#F59E0B", border: "2px solid #fff" }}
+      />
+      <Handle
+        type="target"
+        position={Position.Bottom}
+        id="cold-in-bottom"
+        style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#3B82F6", border: "2px solid #fff" }}
+      />
+      <Handle
+        type="source"
+        position={Position.Top}
+        id="cold-out-top"
+        style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#3B82F6", border: "2px solid #fff" }}
+      />
+      <Handle
+        type="source"
+        position={Position.Top}
+        id="Qout"
+        style={{ left: "80%", width: 10, height: 10, background: "#F97316", border: "2px solid #fff" }}
+      />
     </div>
   );
 };
@@ -731,14 +1115,22 @@ const PackedColumnNode = ({ id, data }) => {
         <rect x={Math.max(0, width/2-44)} y={height/2-12} width="88" height="24" fill="rgba(255,255,255,.85)" stroke="#000"/>
         <text x={width/2} y={height/2+6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
       </svg>
-      <Handle type="target" position={Position.Left} id="in" style={{ top: "70%" }} />
-      <Handle type="source" position={Position.Right} id="out" style={{ top: "30%" }} />
+      <Handle type="target" position={Position.Top} id="reflux-top" style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
+      <Handle type="target" position={Position.Right} id="feed-stage-18" style={{ top: "60%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
+      <Handle type="target" position={Position.Right} id="feed-stage-12" style={{ top: "58%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
+      <Handle type="target" position={Position.Right} id="feed-stage-10" style={{ top: "55%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
+      <Handle type="target" position={Position.Right} id="feed-stage-8" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
+      <Handle type="target" position={Position.Right} id="feed-stage-6" style={{ top: "45%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
+      <Handle type="target" position={Position.Right} id="feed-left" style={{ top: "40%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
+      <Handle type="target" position={Position.Right} id="in-left" style={{ top: "35%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
+      <Handle type="source" position={Position.Top} id="overhead-top" style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }} />
+      <Handle type="source" position={Position.Bottom} id="bottoms-bottom" style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }} />
     </div>
   );
 };
 
 // Heat Exchanger variants
-const KettleReboilerNode = ({ data }) => {
+const KettleReboilerNode = ({ id, data }) => {
   const { width=150, height=90, label="Kettle Reboiler" } = data || {};
   return (
     <div style={{ width, height }}>
@@ -750,15 +1142,65 @@ const KettleReboilerNode = ({ data }) => {
         {Array.from({length:4}).map((_,i)=> <line key={i} x1={18} x2={width*0.6} y1={28+i*12} y2={28+i*12} stroke="#000" opacity=".35"/>) }
         <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
       </svg>
-      <Handle type="target" position={Position.Left} id="shellIn" />
-      <Handle type="source" position={Position.Right} id="shellOut" />
-      <Handle type="target" position={Position.Bottom} id="reboilDuty" />
-      <Handle type="source" position={Position.Top} id="vaporOut" />
+      {["hot-in-left", "inlet", "feed", "process-in"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="target"
+          position={Position.Left}
+          id={handleId}
+          style={{ top: "60%", transform: "translateY(-50%)", width: 12, height: 12, background: "#F59E0B", border: "2px solid #fff" }}
+        />
+      ))}
+      {["hot-out-right", "outlet", "process-out"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="source"
+          position={Position.Right}
+          id={handleId}
+          style={{ top: "60%", transform: "translateY(-50%)", width: 12, height: 12, background: "#F59E0B", border: "2px solid #fff" }}
+        />
+      ))}
+      {["cold-in-bottom", "utility-in"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="target"
+          position={Position.Bottom}
+          id={handleId}
+          style={{ left: "35%", width: 12, height: 12, background: "#3B82F6", border: "2px solid #fff" }}
+        />
+      ))}
+      {["cold-out-top", "utility-out"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="source"
+          position={Position.Top}
+          id={handleId}
+          style={{ left: "35%", width: 12, height: 12, background: "#3B82F6", border: "2px solid #fff" }}
+        />
+      ))}
+      {["vapor-out-top", "steam-out"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="source"
+          position={Position.Top}
+          id={handleId}
+          style={{ left: "70%", width: 12, height: 12, background: "#10B981", border: "2px solid #fff" }}
+        />
+      ))}
+      {["liquid-return-bottom", "return", "reflux-in"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="target"
+          position={Position.Bottom}
+          id={handleId}
+          style={{ left: "70%", width: 12, height: 12, background: "#10B981", border: "2px solid #fff" }}
+        />
+      ))}
     </div>
   );
 };
 
-const PlateHXNode = ({ data }) => {
+const PlateHXNode = ({ id, data }) => {
   const { width=130, height=90, label="Plate HX" } = data || {};
   return (
     <div style={{ width, height }}>
@@ -770,15 +1212,47 @@ const PlateHXNode = ({ data }) => {
         })}
         <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
       </svg>
-      <Handle type="target" position={Position.Left} />
-      <Handle type="source" position={Position.Right} />
-      <Handle type="target" position={Position.Top} id="secIn" />
-      <Handle type="source" position={Position.Bottom} id="secOut" />
+      {["hot-in-left", "inlet", "feed", "process-in"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="target"
+          position={Position.Left}
+          id={handleId}
+          style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#F59E0B", border: "2px solid #fff" }}
+        />
+      ))}
+      {["hot-out-right", "outlet", "process-out"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="source"
+          position={Position.Right}
+          id={handleId}
+          style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#F59E0B", border: "2px solid #fff" }}
+        />
+      ))}
+      {["cold-in-bottom", "utility-in", "cold-inlet"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="target"
+          position={Position.Bottom}
+          id={handleId}
+          style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#3B82F6", border: "2px solid #fff" }}
+        />
+      ))}
+      {["cold-out-top", "utility-out", "cold-outlet"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="source"
+          position={Position.Top}
+          id={handleId}
+          style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#3B82F6", border: "2px solid #fff" }}
+        />
+      ))}
     </div>
   );
 };
 
-const DoublePipeHXNode = ({ data }) => {
+const DoublePipeHXNode = ({ id, data }) => {
   const { width=160, height=60, label="Double-Pipe HX" } = data || {};
   return (
     <div style={{ width, height }}>
@@ -789,15 +1263,47 @@ const DoublePipeHXNode = ({ data }) => {
         <rect x="10" y={height/2-8} width={width-20} height={16} rx={8} ry={8} fill="#fff" stroke="#000" opacity=".6" />
         <text x={width/2} y={height-4} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
       </svg>
-      <Handle type="target" position={Position.Left} />
-      <Handle type="source" position={Position.Right} />
-      <Handle type="target" position={Position.Top} id="annulusIn" />
-      <Handle type="source" position={Position.Bottom} id="annulusOut" />
+      {["hot-in-left", "inlet", "feed", "process-in"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="target"
+          position={Position.Left}
+          id={handleId}
+          style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#F59E0B", border: "2px solid #fff" }}
+        />
+      ))}
+      {["hot-out-right", "outlet", "process-out"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="source"
+          position={Position.Right}
+          id={handleId}
+          style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#F59E0B", border: "2px solid #fff" }}
+        />
+      ))}
+      {["cold-in-bottom", "utility-in", "cold-inlet"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="target"
+          position={Position.Bottom}
+          id={handleId}
+          style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#3B82F6", border: "2px solid #fff" }}
+        />
+      ))}
+      {["cold-out-top", "utility-out", "cold-outlet"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="source"
+          position={Position.Top}
+          id={handleId}
+          style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#3B82F6", border: "2px solid #fff" }}
+        />
+      ))}
     </div>
   );
 };
 
-const FiredHeaterNode = ({ data }) => {
+const FiredHeaterNode = ({ id, data }) => {
   const { width=130, height=90, label="Fired Heater" } = data || {};
   return (
     <div style={{ width, height }}>
@@ -807,10 +1313,42 @@ const FiredHeaterNode = ({ data }) => {
         <path d={`M ${width/2} ${height/2+10} c -10 -12 -2 -18 0 -26 c 6 6 12 12 10 20 c -2 8 -6 10 -10 6 z`} fill="#ffcc66" stroke="#cc9933" />
         <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
       </svg>
-      <Handle type="target" position={Position.Left} />
-      <Handle type="source" position={Position.Right} />
-      <Handle type="target" position={Position.Bottom} id="fuel" />
-      <Handle type="source" position={Position.Top} id="flue" />
+      {["in-left", "inlet", "feed", "process-in"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="target"
+          position={Position.Left}
+          id={handleId}
+          style={{ top: "55%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}
+        />
+      ))}
+      {["out-right", "outlet", "product", "process-out"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="source"
+          position={Position.Right}
+          id={handleId}
+          style={{ top: "55%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}
+        />
+      ))}
+      {["fuel-in-bottom", "fuel-inlet"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="target"
+          position={Position.Bottom}
+          id={handleId}
+          style={{ left: "35%", width: 10, height: 10, background: "#F97316", border: "2px solid #fff" }}
+        />
+      ))}
+      {["flue-out-top", "flue-out", "stack"].map(handleId => (
+        <Handle
+          key={`${id}-${handleId}`}
+          type="source"
+          position={Position.Top}
+          id={handleId}
+          style={{ left: "70%", width: 10, height: 10, background: "#F97316", border: "2px solid #fff" }}
+        />
+      ))}
     </div>
   );
 };
@@ -820,7 +1358,10 @@ const GibbsReactorNode = ({ data }) => { const { width=120,height=90,label="Gibb
   <div style={{ width, height }}><svg width={width} height={height}><SvgDefs />
     <rect x="0.5" y="0.5" width={width-1} height={height-1} rx={10} ry={10} fill="url(#metalGradient)" stroke="#000"/>
     <text x={width/2} y={height/2+4} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
-  </svg><Handle type="target" position={Position.Left}/><Handle type="source" position={Position.Right}/></div> ); };
+  </svg>
+    <Handle type="target" position={Position.Left} id="suction-left" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
+    <Handle type="source" position={Position.Right} id="discharge-right" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
+  </div> ); };
 const EquilibriumReactorNode = ({ data }) => { const { width=120,height=90,label="Equil. Reactor" }=data||{}; return (
   <div style={{ width, height }}><svg width={width} height={height}><SvgDefs />
     <rect x="0.5" y="0.5" width={width-1} height={height-1} rx={10} ry={10} fill="url(#metalGradient)" stroke="#000"/>
@@ -832,7 +1373,10 @@ const EquilibriumReactorNode = ({ data }) => { const { width=120,height=90,label
       <path d="M8 8 L0 12 L8 16 Z" fill="#000"/>
     </g>
     <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
-  </svg><Handle type="target" position={Position.Left}/><Handle type="source" position={Position.Right}/></div> ); };
+  </svg>
+  <Handle type="target" position={Position.Left} id="in-left" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
+  <Handle type="source" position={Position.Right} id="out-right" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
+  </div> ); };
 const ConversionReactorNode = ({ data }) => { const { width=120,height=90,label="Conversion Reactor" }=data||{}; return (
   <div style={{ width, height }}><svg width={width} height={height}><SvgDefs />
     <rect x="0.5" y="0.5" width={width-1} height={height-1} rx={10} ry={10} fill="url(#metalGradient)" stroke="#000"/>
@@ -840,13 +1384,19 @@ const ConversionReactorNode = ({ data }) => { const { width=120,height=90,label=
     <path d={`M 20 ${height/2} L ${width-20} ${height/2}`} stroke="#000"/>
     <path d={`M ${width-28} ${height/2-6} L ${width-20} ${height/2} L ${width-28} ${height/2+6} Z`} fill="#000"/>
     <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
-  </svg><Handle type="target" position={Position.Left}/><Handle type="source" position={Position.Right}/></div> ); };
+  </svg>
+  <Handle type="target" position={Position.Left} id="in-left" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
+  <Handle type="source" position={Position.Right} id="out-right" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
+  </div> ); };
 const BatchReactorNode = ({ data }) => { const { width=120,height=120,label="Batch Reactor" }=data||{}; return (
   <div style={{ width, height }}><svg width={width} height={height}><SvgDefs />
     <rect x="0.5" y="0.5" width={width-1} height={height-1} rx={16} ry={16} fill="url(#metalGradient)" stroke="#000"/>
     <path d={`M ${width/2} 12 L ${width/2} ${height-12}`} stroke="#000"/>
     <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
-  </svg><Handle type="target" position={Position.Left}/><Handle type="source" position={Position.Right}/></div> ); };
+  </svg>
+  <Handle type="target" position={Position.Left} id="in-left" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
+  <Handle type="source" position={Position.Right} id="out-right" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
+  </div> ); };
 
 // Rotating equipment variants
 const SteamTurbineNode = ({ data }) => { const { label="Steam Turbine" } = data||{}; return (
@@ -855,8 +1405,8 @@ const SteamTurbineNode = ({ data }) => { const { label="Steam Turbine" } = data|
       <g transform="translate(10,10)"><path d="M20 4 L50 20 L20 36 Z" fill="url(#metalGradient)" stroke="#000"/><circle cx="70" cy="20" r="18" fill="url(#metalGradient)" stroke="#000"/></g>
     </svg>
     <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
-    <Handle type="target" position={Position.Left}/>
-    <Handle type="source" position={Position.Right}/>
+    <Handle type="target" position={Position.Left} id="in-left" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}/>
+    <Handle type="source" position={Position.Right} id="out-right" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}/>
   </div> ); };
 const RecipPumpNode = ({ data }) => { const { label="Recip Pump" }=data||{}; return (
   <div style={{ width: 110, height: 70, display:"grid", placeItems:"center" }}>
@@ -865,8 +1415,8 @@ const RecipPumpNode = ({ data }) => { const { label="Recip Pump" }=data||{}; ret
       <circle cx="80" cy="24" r="10" fill="url(#metalGradient)" stroke="#000"/>
     </svg>
     <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
-    <Handle type="target" position={Position.Left}/>
-    <Handle type="source" position={Position.Right}/>
+    <Handle type="target" position={Position.Left} id="in-left" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}/>
+    <Handle type="source" position={Position.Right} id="out-right" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}/>
   </div> ); };
 const RecipCompressorNode = ({ data }) => { const { label="Recip Compressor" }=data||{}; return (
   <div style={{ width: 120, height: 70, display:"grid", placeItems:"center" }}>
@@ -875,8 +1425,8 @@ const RecipCompressorNode = ({ data }) => { const { label="Recip Compressor" }=d
       <circle cx="94" cy="24" r="12" fill="url(#metalGradient)" stroke="#000"/>
     </svg>
     <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
-    <Handle type="target" position={Position.Left}/>
-    <Handle type="source" position={Position.Right}/>
+    <Handle type="target" position={Position.Left} id="in-left" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}/>
+    <Handle type="source" position={Position.Right} id="out-right" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}/>
   </div> ); };
 
 // Valves & Safety
@@ -886,8 +1436,8 @@ const ControlValveNode = ({ data }) => { const { label="Control Valve" }=data||{
       <g transform="translate(10,10)"><path d="M0 10 L30 25 L30 10 L0 25 Z" fill="url(#metalGradient)" stroke="#000"/><circle cx="15" cy="-2" r="6" fill="#fff" stroke="#000"/><line x1="15" y1="4" x2="15" y2="18" stroke="#000"/></g>
     </svg>
     <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
-    <Handle type="target" position={Position.Left}/>
-    <Handle type="source" position={Position.Right}/>
+    <Handle type="target" position={Position.Left} id="in-left" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}/>
+    <Handle type="source" position={Position.Right} id="out-right" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}/>
   </div> ); };
 const CheckValveNode = ({ data }) => { const { label="Check Valve" }=data||{}; return (
   <div style={{ width: 90, height: 80, display:"grid", placeItems:"center" }}>
@@ -895,8 +1445,8 @@ const CheckValveNode = ({ data }) => { const { label="Check Valve" }=data||{}; r
       <g transform="translate(10,10)"><rect x="0" y="10" width="40" height="10" fill="#fff" stroke="#000"/><path d="M0 10 L20 5 L20 25 L0 20 Z" fill="url(#metalGradient)" stroke="#000"/></g>
     </svg>
     <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
-    <Handle type="target" position={Position.Left}/>
-    <Handle type="source" position={Position.Right}/>
+    <Handle type="target" position={Position.Left} id="in-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
+    <Handle type="source" position={Position.Right} id="out-right" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
   </div> ); };
 const PRVNode = ({ data }) => { const { label="PRV/PSV" }=data||{}; return (
   <div style={{ width: 90, height: 90, display:"grid", placeItems:"center" }}>
@@ -904,24 +1454,24 @@ const PRVNode = ({ data }) => { const { label="PRV/PSV" }=data||{}; return (
       <g transform="translate(20,8)"><path d="M10 0 L20 14 L0 14 Z" fill="#fff" stroke="#000"/><rect x="6" y="14" width="8" height="22" fill="#fff" stroke="#000"/><path d="M0 36 L20 36 L20 44 L0 44 Z" fill="#fff" stroke="#000"/></g>
     </svg>
     <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
-    <Handle type="target" position={Position.Left}/>
-    <Handle type="source" position={Position.Right}/>
+    <Handle type="target" position={Position.Left} id="in-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
+    <Handle type="source" position={Position.Right} id="out-right" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
   </div> ); };
 const ThrottleValveNode = ({ data }) => { const { label="Throttle Valve" }=data||{}; return (
   <div style={{ width: 90, height: 80, display:"grid", placeItems:"center" }}>
     <svg width="90" height="60"><SvgDefs /><g transform="translate(10,10)"><path d="M0 10 L30 25 L30 10 L0 25 Z" fill="url(#metalGradient)" stroke="#000"/><circle cx="15" cy="18" r="4" fill="#000"/></g></svg>
     <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
-    <Handle type="target" position={Position.Left}/>
-    <Handle type="source" position={Position.Right}/>
+    <Handle type="target" position={Position.Left} id="in-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
+    <Handle type="source" position={Position.Right} id="out-right" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
   </div> ); };
 
 // Additional vessels
 const HorizontalVesselNode = ({ data }) => { const { width=180,height=70,label="Horizontal Vessel" }=data||{}; return (
-  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="0.5" y="10.5" width={width-1} height={height-21} rx={height/2} ry={height/2} fill="url(#metalGradient)" stroke="#000"/><text x={width/2} y={height/2+5} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text></svg><Handle type="target" position={Position.Left}/><Handle type="source" position={Position.Right}/></div> ); };
+  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="0.5" y="10.5" width={width-1} height={height-21} rx={height/2} ry={height/2} fill="url(#metalGradient)" stroke="#000"/><text x={width/2} y={height/2+5} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text></svg><Handle type="target" position={Position.Left} id="in-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/><Handle type="source" position={Position.Right} id="out-right" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/></div> ); };
 const SurgeDrumNode = ({ data }) => { const { width=140,height=90,label="Surge Drum" }=data||{}; return (
-  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="0.5" y="20.5" width={width-1} height={height-41} rx={16} ry={16} fill="url(#metalGradient)" stroke="#000"/><text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text></svg><Handle type="target" position={Position.Left}/><Handle type="source" position={Position.Right}/></div> ); };
+  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="0.5" y="20.5" width={width-1} height={height-41} rx={16} ry={16} fill="url(#metalGradient)" stroke="#000"/><text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text></svg><Handle type="target" position={Position.Left} id="feed-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/><Handle type="source" position={Position.Top} id="vapor-top" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/><Handle type="source" position={Position.Bottom} id="liquid-bottom" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/></div> ); };
 const HorizontalKODrumNode = ({ data }) => { const { width=180,height=70,label="KO Drum (Horiz)" }=data||{}; return (
-  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="0.5" y="10.5" width={width-1} height={height-21} rx={height/2} ry={height/2} fill="url(#metalGradient)" stroke="#000"/><line x1={width*0.2} x2={width*0.8} y1={height/2} y2={height/2} stroke="#000" opacity=".3"/><text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text></svg><Handle type="target" position={Position.Left}/><Handle type="source" position={Position.Right}/></div> ); };
+  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="0.5" y="10.5" width={width-1} height={height-21} rx={height/2} ry={height/2} fill="url(#metalGradient)" stroke="#000"/><line x1={width*0.2} x2={width*0.8} y1={height/2} y2={height/2} stroke="#000" opacity=".3"/><text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text></svg><Handle type="target" position={Position.Left} id="feed-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/><Handle type="source" position={Position.Top} id="vapor-top" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/><Handle type="source" position={Position.Bottom} id="liquid-bottom" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/></div> ); };
 
 // Misc equipment
 const TeeJunctionNode = ({ data }) => { const { label="Tee" }=data||{}; return (
@@ -930,18 +1480,19 @@ const TeeJunctionNode = ({ data }) => { const { label="Tee" }=data||{}; return (
       <path d="M10 25 L60 25 M35 10 L35 40" stroke="#000" strokeWidth="4" />
     </svg>
     <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
-    <Handle type="target" position={Position.Left} id="in" />
-    <Handle type="source" position={Position.Right} id="out" style={{ top:"50%" }}/>
-    <Handle type="source" position={Position.Top} id="branch" />
+    <Handle type="target" position={Position.Left} id="in-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }} />
+    <Handle type="source" position={Position.Right} id="out-1-right" style={{ top:"30%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
+    <Handle type="source" position={Position.Right} id="out-2-right" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
+    <Handle type="source" position={Position.Right} id="out-3-right" style={{ top:"80%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
   </div> ); };
 const FilterStrainerNode = ({ data }) => { const { width=110,height=70,label="Filter" }=data||{}; return (
-  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="10" y="10" width={width-20} height={height-20} rx={10} ry={10} fill="#fff" stroke="#000"/><path d={`M 20 20 L ${width-20} ${height-20}`} stroke="#000" opacity=".4"/><path d={`M 20 ${height-20} L ${width-20} 20`} stroke="#000" opacity=".4"/></svg><div style={{ fontSize:12, fontWeight:600, textAlign:"center" }}>{label}</div><Handle type="target" position={Position.Left}/><Handle type="source" position={Position.Right}/></div> ); };
+  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="10" y="10" width={width-20} height={height-20} rx={10} ry={10} fill="#fff" stroke="#000"/><path d={`M 20 20 L ${width-20} ${height-20}`} stroke="#000" opacity=".4"/><path d={`M 20 ${height-20} L ${width-20} 20`} stroke="#000" opacity=".4"/></svg><div style={{ fontSize:12, fontWeight:600, textAlign:"center" }}>{label}</div><Handle type="target" position={Position.Left} id="in-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/><Handle type="source" position={Position.Right} id="out-right" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/></div> ); };
 const CycloneNode = ({ data }) => { const { width=90,height=120,label="Cyclone" }=data||{}; return (
-  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><path d={`M ${width/2} 10 L ${width-20} ${height-40} L 20 ${height-40} Z`} fill="#fff" stroke="#000"/><rect x={width/2-8} y={height-40} width={16} height={24} fill="#fff" stroke="#000"/></svg><div style={{ fontSize:12, fontWeight:600, textAlign:"center" }}>{label}</div><Handle type="target" position={Position.Top}/><Handle type="source" position={Position.Bottom}/></div> ); };
+  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><path d={`M ${width/2} 10 L ${width-20} ${height-40} L 20 ${height-40} Z`} fill="#fff" stroke="#000"/><rect x={width/2-8} y={height-40} width={16} height={24} fill="#fff" stroke="#000"/></svg><div style={{ fontSize:12, fontWeight:600, textAlign:"center" }}>{label}</div><Handle type="target" position={Position.Left} id="feed-left" style={{ top:"40%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/><Handle type="source" position={Position.Top} id="vapor-top" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/><Handle type="source" position={Position.Bottom} id="liquid-bottom" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/></div> ); };
 const AdsorberNode = ({ data }) => { const { width=100,height=160,label="Adsorber" }=data||{}; return (
-  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="10" y="10" width={width-20} height={height-20} rx={20} ry={20} fill="url(#metalGradient)" stroke="#000"/><text x={width/2} y={height/2} fontSize="10" textAnchor="middle" opacity=".6">BED</text></svg><div style={{ fontSize:12, fontWeight:600, textAlign:"center" }}>{label}</div><Handle type="target" position={Position.Left}/><Handle type="source" position={Position.Right}/></div> ); };
+  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="10" y="10" width={width-20} height={height-20} rx={20} ry={20} fill="url(#metalGradient)" stroke="#000"/><text x={width/2} y={height/2} fontSize="10" textAnchor="middle" opacity=".6">BED</text></svg><div style={{ fontSize:12, fontWeight:600, textAlign:"center" }}>{label}</div><Handle type="target" position={Position.Left} id="in-left" style={{ top:"60%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/><Handle type="source" position={Position.Right} id="out-right" style={{ top:"60%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/></div> ); };
 const MembraneNode = ({ data }) => { const { width=140,height=80,label="Membrane" }=data||{}; return (
-  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="0.5" y="10.5" width={width-1} height={height-21} rx={10} ry={10} fill="#fff" stroke="#000"/><path d={`M ${width/2} 12 L ${width/2} ${height-12}`} stroke="#000" strokeDasharray="4 4"/><path d={`M ${width/2-16} ${height/2} L ${width/2+16} ${height/2}`} stroke="#000" markerEnd="url(#arrow)"/></svg><div style={{ fontSize:12, fontWeight:600, textAlign:"center" }}>{label}</div><Handle type="target" position={Position.Left}/><Handle type="source" position={Position.Right}/></div> ); };
+  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="0.5" y="10.5" width={width-1} height={height-21} rx={10} ry={10} fill="#fff" stroke="#000"/><path d={`M ${width/2} 12 L ${width/2} ${height-12}`} stroke="#000" strokeDasharray="4 4"/><path d={`M ${width/2-16} ${height/2} L ${width/2+16} ${height/2}`} stroke="#000" markerEnd="url(#arrow)"/></svg><div style={{ fontSize:12, fontWeight:600, textAlign:"center" }}>{label}</div><Handle type="target" position={Position.Left} id="in-left" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/><Handle type="source" position={Position.Right} id="out-right" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/></div> ); };
 
 // Instrumentation bubbles
 const InstrumentBubble = ({ code="TI" }) => (

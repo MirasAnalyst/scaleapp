@@ -4,6 +4,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { FlowSheetData } from '../api/flowsheet/route';
 import HYSYSFlowsheetEditor from '../../components/HYSYSFlowsheetEditor';
+import { normalizeFlowsheetHandles } from '../../lib/flowsheet/handleNormalization';
 import { 
   Wand2, 
   Save, 
@@ -80,7 +81,8 @@ export default function BuilderPage() {
         throw new Error(errorData.error || 'Failed to generate flowsheet');
       }
 
-      const data: FlowSheetData = await response.json();
+      const rawData: FlowSheetData = await response.json();
+      const data = normalizeFlowsheetHandles(rawData);
 
       // Update the flow with new data
       setGeneratedNodes(data.nodes);
