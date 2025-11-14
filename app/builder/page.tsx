@@ -4,6 +4,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { FlowSheetData } from '../api/flowsheet/route';
 import HYSYSFlowsheetEditor from '../../components/HYSYSFlowsheetEditor';
+import { buildSimulationPayload, SimulationResult } from '../../lib/simulation';
 import { normalizeFlowsheetHandles } from '../../lib/flowsheet/handleNormalization';
 import { 
   Wand2, 
@@ -37,6 +38,9 @@ export default function BuilderPage() {
   const [showHistory, setShowHistory] = useState(false);
   const [generatedNodes, setGeneratedNodes] = useState<any[]>([]);
   const [generatedEdges, setGeneratedEdges] = useState<any[]>([]);
+  const [simulationResult, setSimulationResult] = useState<SimulationResult | null>(null);
+  const [simulationError, setSimulationError] = useState<string | null>(null);
+  const [isSimulating, setIsSimulating] = useState(false);
 
   // Load history from localStorage on component mount
   useEffect(() => {
@@ -56,6 +60,40 @@ export default function BuilderPage() {
   }, [history]);
 
   // Connection handling is now managed by HYSYSFlowsheetEditor
+
+  const runSimulation = async (flowsheet: FlowSheetData) => {
+    setIsSimulating(true);
+    setSimulationError(null);
+    try {
+      const payload = buildSimulationPayload(
+        flowsheet.description || flowsheet?.nodes?.[0]?.data?.label || 'generated-flowsheet',
+        flowsheet.nodes,
+        flowsheet.edges
+      );
+
+      const response = await fetch('/api/simulate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Simulation run failed');
+      }
+
+      const data: SimulationResult = await response.json();
+      setSimulationResult(data);
+    } catch (err) {
+      console.error('Simulation error', err);
+      setSimulationError(err instanceof Error ? err.message : 'Simulation run failed');
+      setSimulationResult(null);
+    } finally {
+      setIsSimulating(false);
+    }
+  };
 
   const generateFlowsheet = async () => {
     if (!prompt.trim()) {
@@ -89,6 +127,7 @@ export default function BuilderPage() {
       setGeneratedEdges(data.edges);
       setAspenInstructions(data.aspenInstructions);
       setDescription(data.description);
+      runSimulation(data).catch(() => {});
 
       // Add to history
       const historyItem: HistoryItem = {
@@ -116,6 +155,7 @@ export default function BuilderPage() {
     setPrompt(item.prompt);
     setShowHistory(false);
     setSuccess('Flowsheet loaded from history');
+    runSimulation(item.data).catch(() => {});
   };
 
   const clearFlowsheet = () => {
@@ -126,6 +166,8 @@ export default function BuilderPage() {
     setPrompt('');
     setError(null);
     setSuccess(null);
+    setSimulationResult(null);
+    setSimulationError(null);
   };
 
   const downloadFlowsheet = () => {
@@ -279,6 +321,47 @@ export default function BuilderPage() {
                 <pre className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap font-mono">
                   {aspenInstructions}
                 </pre>
+              </div>
+            </div>
+          )}
+
+          {isSimulating && (
+            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+              <div className="text-sm text-blue-600 dark:text-blue-400">Running DWSIM simulation...</div>
+            </div>
+          )}
+
+          {simulationError && (
+            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+              <div className="text-sm text-red-600 dark:text-red-400">Simulation error: {simulationError}</div>
+            </div>
+          )}
+
+          {simulationResult && (
+            <div className="p-4 border-b border-gray-200 dark:border-gray-700 space-y-3">
+              <div>
+                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Simulation Results</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Status: {simulationResult.status}</p>
+                {simulationResult.warnings && simulationResult.warnings.length > 0 && (
+                  <ul className="mt-1 list-disc list-inside text-xs text-yellow-600 dark:text-yellow-400">
+                    {simulationResult.warnings.map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div>
+                <h4 className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">Streams</h4>
+                <div className="mt-2 space-y-2 max-h-48 overflow-y-auto">
+                  {simulationResult.streams.slice(0, 5).map((stream) => (
+                    <div key={stream.id} className="text-xs bg-gray-50 dark:bg-gray-700 rounded p-2">
+                      <div className="font-semibold text-gray-700 dark:text-gray-200">{stream.id}</div>
+                      <div className="text-gray-600 dark:text-gray-300">T: {stream.temperature_c?.toFixed(1) ?? '—'} °C</div>
+                      <div className="text-gray-600 dark:text-gray-300">P: {stream.pressure_kpa?.toFixed(1) ?? '—'} kPa</div>
+                      <div className="text-gray-600 dark:text-gray-300">Mass Flow: {stream.mass_flow_kg_per_h?.toFixed(1) ?? '—'} kg/h</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           )}

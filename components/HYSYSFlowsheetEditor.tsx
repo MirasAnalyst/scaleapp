@@ -220,11 +220,12 @@ const DistillationColumnNode = ({ id, data }: { id: string; data: any }) => {
         {labelDimensions.lines.map((line, index) => (
           <text 
             key={index}
-            x={width/2} 
+            x={index === 0 ? width/2 : labelX + 8} 
             y={labelY + 12 + (index * 16)} 
             fontSize="12" 
             fontWeight={600} 
-            textAnchor="middle"
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
           >
             {line}
           </text>
@@ -350,11 +351,12 @@ const FlashDrumNode = ({ id, data }) => {
         {labelDimensions.lines.map((line, index) => (
           <text 
             key={index}
-            x={width/2} 
+            x={index === 0 ? width/2 : labelX + 8} 
             y={labelY + 12 + (index * 16)} 
             fontSize="12" 
             fontWeight={600} 
-            textAnchor="middle"
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
           >
             {line}
           </text>
@@ -411,11 +413,12 @@ const SeparatorHorizontalNode = ({ id, data }) => {
         {labelDimensions.lines.map((line, index) => (
           <text 
             key={index}
-            x={width/2} 
+            x={index === 0 ? width/2 : labelX + 8} 
             y={labelY + 12 + (index * 16)} 
             fontSize="12" 
             fontWeight={600} 
-            textAnchor="middle"
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
           >
             {line}
           </text>
@@ -455,6 +458,13 @@ const SeparatorHorizontalNode = ({ id, data }) => {
 const Separator3PhaseNode = ({ id, data }) => {
   // 3‑phase horizontal separator (gas, oil, water)
   const { width = 200, height = 80, label = "3‑Phase Sep" } = data || {};
+  
+  // Calculate dynamic label dimensions with text wrapping
+  const maxLabelWidth = Math.min(200, width - 20);
+  const labelDimensions = calculateLabelDimensions(label, maxLabelWidth, 80, 20);
+  const labelX = Math.max(10, (width - labelDimensions.width) / 2);
+  const labelY = height / 2 - labelDimensions.height / 2;
+  
   return (
     <div style={{ width, height, position: "relative" }}>
       <svg width={width} height={height}>
@@ -463,7 +473,21 @@ const Separator3PhaseNode = ({ id, data }) => {
         {/* Internal weir hints */}
         <line x1={width*0.35} y1={height*0.25} x2={width*0.35} y2={height*0.75} stroke="#000" opacity=".3" />
         <line x1={width*0.65} y1={height*0.25} x2={width*0.65} y2={height*0.75} stroke="#000" opacity=".3" />
-        <text x={width/2} y={height/2+5} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+        {/* Dynamic Multi-line Label */}
+        <rect x={labelX} y={labelY} width={labelDimensions.width} height={labelDimensions.height} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
+        {labelDimensions.lines.map((line, index) => (
+          <text 
+            key={index}
+            x={index === 0 ? width/2 : labelX + 8} 
+            y={labelY + 12 + (index * 16)} 
+            fontSize="12" 
+            fontWeight={600} 
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
+          >
+            {line}
+          </text>
+        ))}
       </svg>
       {["feed-left", "inlet", "in", "feed"].map(handleId => (
         <Handle
@@ -528,11 +552,12 @@ const TankNode = ({ id, data }) => {
         {labelDimensions.lines.map((line, index) => (
           <text 
             key={index}
-            x={width/2} 
+            x={index === 0 ? width/2 : labelX + 8} 
             y={labelY + 12 + (index * 16)} 
             fontSize="12" 
             fontWeight={600} 
-            textAnchor="middle"
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
           >
             {line}
           </text>
@@ -576,11 +601,12 @@ const HeaterCoolerNode = ({ id, data }) => {
         {labelDimensions.lines.map((line, index) => (
           <text 
             key={index}
-            x={width/2} 
+            x={index === 0 ? width/2 : labelX + 8} 
             y={labelY + 12 + (index * 16)} 
             fontSize="12" 
             fontWeight={600} 
-            textAnchor="middle"
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
           >
             {line}
           </text>
@@ -629,11 +655,11 @@ const HeaterCoolerNode = ({ id, data }) => {
 const ShellTubeHXNode = ({ id, data }) => {
   const { width = 140, height = 80, label = "Shell & Tube HX" } = data || {};
   
-  // Calculate dynamic label dimensions
-  const labelWidth = calculateLabelWidth(label, 80, Math.min(200, width - 20));
-  const labelHeight = calculateLabelHeight(label, 20);
-  const labelX = Math.max(10, (width - labelWidth) / 2);
-  const labelY = height / 2 - labelHeight / 2;
+  // Calculate dynamic label dimensions with text wrapping
+  const maxLabelWidth = Math.min(200, width - 20);
+  const labelDimensions = calculateLabelDimensions(label, maxLabelWidth, 80, 20);
+  const labelX = Math.max(10, (width - labelDimensions.width) / 2);
+  const labelY = height / 2 - labelDimensions.height / 2;
   
   return (
     <div style={{ width, height }}>
@@ -644,9 +670,21 @@ const ShellTubeHXNode = ({ id, data }) => {
         {Array.from({length:4}).map((_,i)=>{
           const y=20+i*12; return <line key={i} x1={15} x2={width-15} y1={y} y2={y} stroke="#000" opacity=".35"/>;
         })}
-        {/* Dynamic Label */}
-        <rect x={labelX} y={labelY} width={labelWidth} height={labelHeight} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
-        <text x={width/2} y={labelY + labelHeight/2 + 4} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+        {/* Dynamic Multi-line Label */}
+        <rect x={labelX} y={labelY} width={labelDimensions.width} height={labelDimensions.height} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
+        {labelDimensions.lines.map((line, index) => (
+          <text 
+            key={index}
+            x={index === 0 ? width/2 : labelX + 8} 
+            y={labelY + 12 + (index * 16)} 
+            fontSize="12" 
+            fontWeight={600} 
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
+          >
+            {line}
+          </text>
+        ))}
       </svg>
       {["hot-in-left", "inlet", "in", "feed", "shell-inlet", "process-in"].map(handleId => (
         <Handle
@@ -691,11 +729,11 @@ const ShellTubeHXNode = ({ id, data }) => {
 const AirCoolerNode = ({ id, data }) => {
   const { width = 160, height = 90, label = "Air Cooler" } = data || {};
   
-  // Calculate dynamic label dimensions
-  const labelWidth = calculateLabelWidth(label, 80, Math.min(200, width - 20));
-  const labelHeight = calculateLabelHeight(label, 20);
-  const labelX = Math.max(10, (width - labelWidth) / 2);
-  const labelY = height - labelHeight - 5;
+  // Calculate dynamic label dimensions with text wrapping
+  const maxLabelWidth = Math.min(200, width - 20);
+  const labelDimensions = calculateLabelDimensions(label, maxLabelWidth, 80, 20);
+  const labelX = Math.max(10, (width - labelDimensions.width) / 2);
+  const labelY = height - labelDimensions.height - 5;
   
   return (
     <div style={{ width, height }}>
@@ -708,9 +746,21 @@ const AirCoolerNode = ({ id, data }) => {
             <path d="M0 -10 L6 0 L0 10 L-6 0 Z" fill="#cfd8e3" stroke="#000"/>
           </g>
         ))}
-        {/* Dynamic Label */}
-        <rect x={labelX} y={labelY} width={labelWidth} height={labelHeight} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
-        <text x={width/2} y={labelY + labelHeight/2 + 4} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+        {/* Dynamic Multi-line Label */}
+        <rect x={labelX} y={labelY} width={labelDimensions.width} height={labelDimensions.height} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
+        {labelDimensions.lines.map((line, index) => (
+          <text 
+            key={index}
+            x={index === 0 ? width/2 : labelX + 8} 
+            y={labelY + 12 + (index * 16)} 
+            fontSize="12" 
+            fontWeight={600} 
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
+          >
+            {line}
+          </text>
+        ))}
       </svg>
       {["hot-in-left", "inlet", "in", "feed", "process-in"].map(handleId => (
         <Handle
@@ -760,11 +810,11 @@ const CSTRNode = ({ id, data }) => {
   const { width = 120, height = 120, fillLevel = 0.5, label = "CSTR" } = data || {};
   const level = clamp01(fillLevel), pad=8, innerW=width-pad*2, innerH=height-pad*2, fillH=innerH*level;
   
-  // Calculate dynamic label dimensions
-  const labelWidth = calculateLabelWidth(label, 60, Math.min(200, width - 10));
-  const labelHeight = calculateLabelHeight(label, 20);
-  const labelX = Math.max(5, (width - labelWidth) / 2);
-  const labelY = height - labelHeight - 5;
+  // Calculate dynamic label dimensions with text wrapping
+  const maxLabelWidth = Math.min(200, width - 10);
+  const labelDimensions = calculateLabelDimensions(label, maxLabelWidth, 60, 20);
+  const labelX = Math.max(5, (width - labelDimensions.width) / 2);
+  const labelY = height - labelDimensions.height - 5;
   
   return (
     <div style={{ width, height }}>
@@ -779,9 +829,21 @@ const CSTRNode = ({ id, data }) => {
             <path d="M0 0 L16 6 L0 12 Z" fill="#000"/>
           </g>
         </g>
-        {/* Dynamic Label */}
-        <rect x={labelX} y={labelY} width={labelWidth} height={labelHeight} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
-        <text x={width/2} y={labelY + labelHeight/2 + 4} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+        {/* Dynamic Multi-line Label */}
+        <rect x={labelX} y={labelY} width={labelDimensions.width} height={labelDimensions.height} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
+        {labelDimensions.lines.map((line, index) => (
+          <text 
+            key={index}
+            x={index === 0 ? width/2 : labelX + 8} 
+            y={labelY + 12 + (index * 16)} 
+            fontSize="12" 
+            fontWeight={600} 
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
+          >
+            {line}
+          </text>
+        ))}
       </svg>
       <Handle
         type="target"
@@ -803,19 +865,31 @@ const PFRNode = ({ data }) => {
   // Tubular reactor: long rounded rectangle
   const { width = 180, height = 40, label = "PFR" } = data || {};
   
-  // Calculate dynamic label dimensions
-  const labelWidth = calculateLabelWidth(label, 60, Math.min(200, width - 20));
-  const labelHeight = calculateLabelHeight(label, 20);
-  const labelX = Math.max(10, (width - labelWidth) / 2);
-  const labelY = height / 2 - labelHeight / 2;
+  // Calculate dynamic label dimensions with text wrapping
+  const maxLabelWidth = Math.min(200, width - 20);
+  const labelDimensions = calculateLabelDimensions(label, maxLabelWidth, 60, 20);
+  const labelX = Math.max(10, (width - labelDimensions.width) / 2);
+  const labelY = height / 2 - labelDimensions.height / 2;
   
   return (
     <div style={{ width, height }}>
       <svg width={width} height={height}><SvgDefs />
         <rect x="0.5" y="0.5" width={width-1} height={height-1} rx={height/2} ry={height/2} fill="url(#metalGradient)" stroke="#000"/>
-        {/* Dynamic Label */}
-        <rect x={labelX} y={labelY} width={labelWidth} height={labelHeight} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
-        <text x={width/2} y={labelY + labelHeight/2 + 4} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+        {/* Dynamic Multi-line Label */}
+        <rect x={labelX} y={labelY} width={labelDimensions.width} height={labelDimensions.height} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
+        {labelDimensions.lines.map((line, index) => (
+          <text 
+            key={index}
+            x={index === 0 ? width/2 : labelX + 8} 
+            y={labelY + 12 + (index * 16)} 
+            fontSize="12" 
+            fontWeight={600} 
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
+          >
+            {line}
+          </text>
+        ))}
       </svg>
       <Handle
         type="target"
@@ -858,7 +932,8 @@ const PumpNode = ({ data }) => {
         borderRadius: "2px",
         padding: "2px 6px",
         minWidth: labelWidth,
-        textAlign: "center"
+        textAlign: "center",
+        color: "#000"
       }}>{label}</div>
       <Handle type="target" position={Position.Left} id="suction-left" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
       <Handle type="source" position={Position.Right} id="discharge-right" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }} />
@@ -890,7 +965,8 @@ const CompressorNode = ({ data }) => {
         borderRadius: "2px",
         padding: "2px 6px",
         minWidth: labelWidth,
-        textAlign: "center"
+        textAlign: "center",
+        color: "#000"
       }}>{label}</div>
       <Handle type="target" position={Position.Left} id="suction-left" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
       <Handle type="source" position={Position.Right} id="discharge-right" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }} />
@@ -922,7 +998,8 @@ const TurbineNode = ({ data }) => {
         borderRadius: "2px",
         padding: "2px 6px",
         minWidth: labelWidth,
-        textAlign: "center"
+        textAlign: "center",
+        color: "#000"
       }}>{label}</div>
       <Handle
         type="target"
@@ -955,7 +1032,7 @@ const ValveNode = ({ data }) => {
           <line x1="9" y1="38" x2="21" y2="38" stroke="#000" />
         </g>
       </svg>
-      <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "#000" }}>{label}</div>
       <Handle type="target" position={Position.Left} id="in-left" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
       <Handle type="source" position={Position.Right} id="out-right" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }} />
     </div>
@@ -970,7 +1047,7 @@ const MixerNode = ({ data }) => {
       <svg width="70" height="60"><SvgDefs />
         <circle cx="35" cy="30" r="14" fill="#fff" stroke="#000" />
       </svg>
-      <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "#000" }}>{label}</div>
       <Handle type="target" position={Position.Left} id="in-1-left" style={{ top: "25%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
       <Handle type="target" position={Position.Left} id="in-2-left" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
       <Handle type="target" position={Position.Left} id="in-3-left" style={{ top: "75%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
@@ -987,7 +1064,7 @@ const SplitterNode = ({ data }) => {
       <svg width="80" height="60"><SvgDefs />
         <path d="M40 10 L40 30 M40 30 L15 50 M40 30 L65 50" stroke="#000" fill="none" strokeWidth="3" />
       </svg>
-      <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "#000" }}>{label}</div>
       <Handle type="target" position={Position.Left} id="in-left" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
       <Handle type="source" position={Position.Right} id="out-1-right" style={{ top: "25%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }} />
       <Handle type="source" position={Position.Right} id="out-2-right" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }} />
@@ -1009,7 +1086,7 @@ const BoilerNode = ({ data }) => {
           <circle cx="25" cy="45" r="10" fill="url(#metalGradient)" stroke="#000" />
         </g>
       </svg>
-      <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "#000" }}>{label}</div>
       <Handle
         type="target"
         position={Position.Left}
@@ -1042,7 +1119,7 @@ const CondenserNode = ({ data }) => {
           <path d="M5 50 L5 56 L11 56 L5 56 L25 28 L25 36 L45 8" fill="url(#metalGradient)" stroke="#000" />
         </g>
       </svg>
-      <div style={{ fontSize: 12, fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "#000" }}>{label}</div>
       <Handle
         type="target"
         position={Position.Left}
@@ -1099,6 +1176,13 @@ const PackedColumnNode = ({ id, data }) => {
   // Same shell as column, but with packed-pattern hint instead of trays
   const { width = 80, height = 220, fillLevel = 0.5, label = "Packed Column" } = data || {};
   const level = clamp01(fillLevel); const pad=6, innerW=width-pad*2, innerH=height-pad*2, fillH=innerH*level;
+  
+  // Calculate dynamic label dimensions with text wrapping
+  const maxLabelWidth = Math.min(200, width - 10);
+  const labelDimensions = calculateLabelDimensions(label, maxLabelWidth, 60, 24);
+  const labelX = Math.max(5, (width - labelDimensions.width) / 2);
+  const labelY = height / 2 - labelDimensions.height / 2;
+  
   return (
     <div style={{ width, height, position: "relative" }}>
       <svg width={width} height={height}><SvgDefs />
@@ -1112,8 +1196,21 @@ const PackedColumnNode = ({ id, data }) => {
             return <path key={i} d={`M ${x0} ${y} q 10 -6 20 0 t 20 0 t 20 0 t 20 0`} stroke="#000" opacity=".2" fill="none"/>;
           })}
         </g>
-        <rect x={Math.max(0, width/2-44)} y={height/2-12} width="88" height="24" fill="rgba(255,255,255,.85)" stroke="#000"/>
-        <text x={width/2} y={height/2+6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+        {/* Dynamic Multi-line Label */}
+        <rect x={labelX} y={labelY} width={labelDimensions.width} height={labelDimensions.height} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
+        {labelDimensions.lines.map((line, index) => (
+          <text 
+            key={index}
+            x={index === 0 ? width/2 : labelX + 8} 
+            y={labelY + 12 + (index * 16)} 
+            fontSize="12" 
+            fontWeight={600} 
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
+          >
+            {line}
+          </text>
+        ))}
       </svg>
       <Handle type="target" position={Position.Top} id="reflux-top" style={{ left: "50%", transform: "translateX(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
       <Handle type="target" position={Position.Right} id="feed-stage-18" style={{ top: "60%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }} />
@@ -1132,6 +1229,13 @@ const PackedColumnNode = ({ id, data }) => {
 // Heat Exchanger variants
 const KettleReboilerNode = ({ id, data }) => {
   const { width=150, height=90, label="Kettle Reboiler" } = data || {};
+  
+  // Calculate dynamic label dimensions with text wrapping
+  const maxLabelWidth = Math.min(200, width - 10);
+  const labelDimensions = calculateLabelDimensions(label, maxLabelWidth, 60, 20);
+  const labelX = Math.max(5, (width - labelDimensions.width) / 2);
+  const labelY = height - labelDimensions.height - 5;
+  
   return (
     <div style={{ width, height }}>
       <svg width={width} height={height}><SvgDefs />
@@ -1140,7 +1244,21 @@ const KettleReboilerNode = ({ id, data }) => {
         <path d={`M 10 20 Q ${width/2} 0 ${width-10} 20`} fill="url(#metalGradient)" stroke="#000" />
         {/* Tube bundle hint on left */}
         {Array.from({length:4}).map((_,i)=> <line key={i} x1={18} x2={width*0.6} y1={28+i*12} y2={28+i*12} stroke="#000" opacity=".35"/>) }
-        <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+        {/* Dynamic Multi-line Label */}
+        <rect x={labelX} y={labelY} width={labelDimensions.width} height={labelDimensions.height} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
+        {labelDimensions.lines.map((line, index) => (
+          <text 
+            key={index}
+            x={index === 0 ? width/2 : labelX + 8} 
+            y={labelY + 12 + (index * 16)} 
+            fontSize="12" 
+            fontWeight={600} 
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
+          >
+            {line}
+          </text>
+        ))}
       </svg>
       {["hot-in-left", "inlet", "feed", "process-in"].map(handleId => (
         <Handle
@@ -1202,6 +1320,13 @@ const KettleReboilerNode = ({ id, data }) => {
 
 const PlateHXNode = ({ id, data }) => {
   const { width=130, height=90, label="Plate HX" } = data || {};
+  
+  // Calculate dynamic label dimensions with text wrapping
+  const maxLabelWidth = Math.min(200, width - 10);
+  const labelDimensions = calculateLabelDimensions(label, maxLabelWidth, 60, 20);
+  const labelX = Math.max(5, (width - labelDimensions.width) / 2);
+  const labelY = height - labelDimensions.height - 5;
+  
   return (
     <div style={{ width, height }}>
       <svg width={width} height={height}><SvgDefs />
@@ -1210,7 +1335,21 @@ const PlateHXNode = ({ id, data }) => {
         {Array.from({length:6}).map((_,i)=>{
           const y = 18 + i*12; return <path key={i} d={`M 12 ${y} L ${width/2} ${y+6} L ${width-12} ${y}`} stroke="#000" opacity=".35" fill="none"/>;
         })}
-        <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+        {/* Dynamic Multi-line Label */}
+        <rect x={labelX} y={labelY} width={labelDimensions.width} height={labelDimensions.height} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
+        {labelDimensions.lines.map((line, index) => (
+          <text 
+            key={index}
+            x={index === 0 ? width/2 : labelX + 8} 
+            y={labelY + 12 + (index * 16)} 
+            fontSize="12" 
+            fontWeight={600} 
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
+          >
+            {line}
+          </text>
+        ))}
       </svg>
       {["hot-in-left", "inlet", "feed", "process-in"].map(handleId => (
         <Handle
@@ -1254,6 +1393,13 @@ const PlateHXNode = ({ id, data }) => {
 
 const DoublePipeHXNode = ({ id, data }) => {
   const { width=160, height=60, label="Double-Pipe HX" } = data || {};
+  
+  // Calculate dynamic label dimensions with text wrapping
+  const maxLabelWidth = Math.min(200, width - 10);
+  const labelDimensions = calculateLabelDimensions(label, maxLabelWidth, 60, 20);
+  const labelX = Math.max(5, (width - labelDimensions.width) / 2);
+  const labelY = height - labelDimensions.height - 5;
+  
   return (
     <div style={{ width, height }}>
       <svg width={width} height={height}><SvgDefs />
@@ -1261,7 +1407,21 @@ const DoublePipeHXNode = ({ id, data }) => {
         <rect x="0.5" y="10.5" width={width-1} height={height-21} rx={height/2} ry={height/2} fill="url(#metalGradient)" stroke="#000" />
         {/* Inner pipe line */}
         <rect x="10" y={height/2-8} width={width-20} height={16} rx={8} ry={8} fill="#fff" stroke="#000" opacity=".6" />
-        <text x={width/2} y={height-4} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+        {/* Dynamic Multi-line Label */}
+        <rect x={labelX} y={labelY} width={labelDimensions.width} height={labelDimensions.height} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
+        {labelDimensions.lines.map((line, index) => (
+          <text 
+            key={index}
+            x={index === 0 ? width/2 : labelX + 8} 
+            y={labelY + 12 + (index * 16)} 
+            fontSize="12" 
+            fontWeight={600} 
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
+          >
+            {line}
+          </text>
+        ))}
       </svg>
       {["hot-in-left", "inlet", "feed", "process-in"].map(handleId => (
         <Handle
@@ -1305,13 +1465,34 @@ const DoublePipeHXNode = ({ id, data }) => {
 
 const FiredHeaterNode = ({ id, data }) => {
   const { width=130, height=90, label="Fired Heater" } = data || {};
+  
+  // Calculate dynamic label dimensions with text wrapping
+  const maxLabelWidth = Math.min(200, width - 10);
+  const labelDimensions = calculateLabelDimensions(label, maxLabelWidth, 60, 20);
+  const labelX = Math.max(5, (width - labelDimensions.width) / 2);
+  const labelY = height - labelDimensions.height - 5;
+  
   return (
     <div style={{ width, height }}>
       <svg width={width} height={height}><SvgDefs />
         <rect x="0.5" y="10.5" width={width-1} height={height-21} rx={8} ry={8} fill="url(#metalGradient)" stroke="#000" />
         {/* Flame symbol */}
         <path d={`M ${width/2} ${height/2+10} c -10 -12 -2 -18 0 -26 c 6 6 12 12 10 20 c -2 8 -6 10 -10 6 z`} fill="#ffcc66" stroke="#cc9933" />
-        <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+        {/* Dynamic Multi-line Label */}
+        <rect x={labelX} y={labelY} width={labelDimensions.width} height={labelDimensions.height} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
+        {labelDimensions.lines.map((line, index) => (
+          <text 
+            key={index}
+            x={index === 0 ? width/2 : labelX + 8} 
+            y={labelY + 12 + (index * 16)} 
+            fontSize="12" 
+            fontWeight={600} 
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
+          >
+            {line}
+          </text>
+        ))}
       </svg>
       {["in-left", "inlet", "feed", "process-in"].map(handleId => (
         <Handle
@@ -1357,7 +1538,7 @@ const FiredHeaterNode = ({ id, data }) => {
 const GibbsReactorNode = ({ data }) => { const { width=120,height=90,label="Gibbs Reactor" }=data||{}; return (
   <div style={{ width, height }}><svg width={width} height={height}><SvgDefs />
     <rect x="0.5" y="0.5" width={width-1} height={height-1} rx={10} ry={10} fill="url(#metalGradient)" stroke="#000"/>
-    <text x={width/2} y={height/2+4} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+    <text x={width/2} y={height/2+4} fontSize="12" fontWeight={600} textAnchor="middle" fill="#000">{label}</text>
   </svg>
     <Handle type="target" position={Position.Left} id="suction-left" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
     <Handle type="source" position={Position.Right} id="discharge-right" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
@@ -1372,7 +1553,7 @@ const EquilibriumReactorNode = ({ data }) => { const { width=120,height=90,label
       <path d="M20 12 L8 12" stroke="#000"/>
       <path d="M8 8 L0 12 L8 16 Z" fill="#000"/>
     </g>
-    <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+    <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle" fill="#000">{label}</text>
   </svg>
   <Handle type="target" position={Position.Left} id="in-left" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
   <Handle type="source" position={Position.Right} id="out-right" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
@@ -1383,7 +1564,7 @@ const ConversionReactorNode = ({ data }) => { const { width=120,height=90,label=
     {/* conversion arrow */}
     <path d={`M 20 ${height/2} L ${width-20} ${height/2}`} stroke="#000"/>
     <path d={`M ${width-28} ${height/2-6} L ${width-20} ${height/2} L ${width-28} ${height/2+6} Z`} fill="#000"/>
-    <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+    <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle" fill="#000">{label}</text>
   </svg>
   <Handle type="target" position={Position.Left} id="in-left" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
   <Handle type="source" position={Position.Right} id="out-right" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
@@ -1392,7 +1573,7 @@ const BatchReactorNode = ({ data }) => { const { width=120,height=120,label="Bat
   <div style={{ width, height }}><svg width={width} height={height}><SvgDefs />
     <rect x="0.5" y="0.5" width={width-1} height={height-1} rx={16} ry={16} fill="url(#metalGradient)" stroke="#000"/>
     <path d={`M ${width/2} 12 L ${width/2} ${height-12}`} stroke="#000"/>
-    <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text>
+    <text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle" fill="#000">{label}</text>
   </svg>
   <Handle type="target" position={Position.Left} id="in-left" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
   <Handle type="source" position={Position.Right} id="out-right" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
@@ -1404,7 +1585,7 @@ const SteamTurbineNode = ({ data }) => { const { label="Steam Turbine" } = data|
     <svg width="110" height="60"><SvgDefs />
       <g transform="translate(10,10)"><path d="M20 4 L50 20 L20 36 Z" fill="url(#metalGradient)" stroke="#000"/><circle cx="70" cy="20" r="18" fill="url(#metalGradient)" stroke="#000"/></g>
     </svg>
-    <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
+    <div style={{ fontSize:12, fontWeight:600, color: "#000" }}>{label}</div>
     <Handle type="target" position={Position.Left} id="in-left" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}/>
     <Handle type="source" position={Position.Right} id="out-right" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}/>
   </div> ); };
@@ -1414,7 +1595,7 @@ const RecipPumpNode = ({ data }) => { const { label="Recip Pump" }=data||{}; ret
       <rect x="10" y="18" width="44" height="12" fill="url(#metalGradient)" stroke="#000"/>
       <circle cx="80" cy="24" r="10" fill="url(#metalGradient)" stroke="#000"/>
     </svg>
-    <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
+    <div style={{ fontSize:12, fontWeight:600, color: "#000" }}>{label}</div>
     <Handle type="target" position={Position.Left} id="in-left" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}/>
     <Handle type="source" position={Position.Right} id="out-right" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}/>
   </div> ); };
@@ -1424,7 +1605,7 @@ const RecipCompressorNode = ({ data }) => { const { label="Recip Compressor" }=d
       <rect x="10" y="18" width="54" height="12" fill="url(#metalGradient)" stroke="#000"/>
       <circle cx="94" cy="24" r="12" fill="url(#metalGradient)" stroke="#000"/>
     </svg>
-    <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
+    <div style={{ fontSize:12, fontWeight:600, color: "#000" }}>{label}</div>
     <Handle type="target" position={Position.Left} id="in-left" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}/>
     <Handle type="source" position={Position.Right} id="out-right" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}/>
   </div> ); };
@@ -1435,7 +1616,7 @@ const ControlValveNode = ({ data }) => { const { label="Control Valve" }=data||{
     <svg width="90" height="60"><SvgDefs />
       <g transform="translate(10,10)"><path d="M0 10 L30 25 L30 10 L0 25 Z" fill="url(#metalGradient)" stroke="#000"/><circle cx="15" cy="-2" r="6" fill="#fff" stroke="#000"/><line x1="15" y1="4" x2="15" y2="18" stroke="#000"/></g>
     </svg>
-    <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
+    <div style={{ fontSize:12, fontWeight:600, color: "#000" }}>{label}</div>
     <Handle type="target" position={Position.Left} id="in-left" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#4CAF50", border: "2px solid #fff" }}/>
     <Handle type="source" position={Position.Right} id="out-right" style={{ top: "50%", transform: "translateY(-50%)", width: 12, height: 12, background: "#2196F3", border: "2px solid #fff" }}/>
   </div> ); };
@@ -1444,7 +1625,7 @@ const CheckValveNode = ({ data }) => { const { label="Check Valve" }=data||{}; r
     <svg width="90" height="60"><SvgDefs />
       <g transform="translate(10,10)"><rect x="0" y="10" width="40" height="10" fill="#fff" stroke="#000"/><path d="M0 10 L20 5 L20 25 L0 20 Z" fill="url(#metalGradient)" stroke="#000"/></g>
     </svg>
-    <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
+    <div style={{ fontSize:12, fontWeight:600, color: "#000" }}>{label}</div>
     <Handle type="target" position={Position.Left} id="in-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
     <Handle type="source" position={Position.Right} id="out-right" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
   </div> ); };
@@ -1453,25 +1634,25 @@ const PRVNode = ({ data }) => { const { label="PRV/PSV" }=data||{}; return (
     <svg width="90" height="70"><SvgDefs />
       <g transform="translate(20,8)"><path d="M10 0 L20 14 L0 14 Z" fill="#fff" stroke="#000"/><rect x="6" y="14" width="8" height="22" fill="#fff" stroke="#000"/><path d="M0 36 L20 36 L20 44 L0 44 Z" fill="#fff" stroke="#000"/></g>
     </svg>
-    <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
+    <div style={{ fontSize:12, fontWeight:600, color: "#000" }}>{label}</div>
     <Handle type="target" position={Position.Left} id="in-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
     <Handle type="source" position={Position.Right} id="out-right" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
   </div> ); };
 const ThrottleValveNode = ({ data }) => { const { label="Throttle Valve" }=data||{}; return (
   <div style={{ width: 90, height: 80, display:"grid", placeItems:"center" }}>
     <svg width="90" height="60"><SvgDefs /><g transform="translate(10,10)"><path d="M0 10 L30 25 L30 10 L0 25 Z" fill="url(#metalGradient)" stroke="#000"/><circle cx="15" cy="18" r="4" fill="#000"/></g></svg>
-    <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
+    <div style={{ fontSize:12, fontWeight:600, color: "#000" }}>{label}</div>
     <Handle type="target" position={Position.Left} id="in-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
     <Handle type="source" position={Position.Right} id="out-right" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
   </div> ); };
 
 // Additional vessels
 const HorizontalVesselNode = ({ data }) => { const { width=180,height=70,label="Horizontal Vessel" }=data||{}; return (
-  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="0.5" y="10.5" width={width-1} height={height-21} rx={height/2} ry={height/2} fill="url(#metalGradient)" stroke="#000"/><text x={width/2} y={height/2+5} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text></svg><Handle type="target" position={Position.Left} id="in-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/><Handle type="source" position={Position.Right} id="out-right" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/></div> ); };
+  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="0.5" y="10.5" width={width-1} height={height-21} rx={height/2} ry={height/2} fill="url(#metalGradient)" stroke="#000"/><text x={width/2} y={height/2+5} fontSize="12" fontWeight={600} textAnchor="middle" fill="#000">{label}</text></svg><Handle type="target" position={Position.Left} id="in-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/><Handle type="source" position={Position.Right} id="out-right" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/></div> ); };
 const SurgeDrumNode = ({ data }) => { const { width=140,height=90,label="Surge Drum" }=data||{}; return (
-  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="0.5" y="20.5" width={width-1} height={height-41} rx={16} ry={16} fill="url(#metalGradient)" stroke="#000"/><text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text></svg><Handle type="target" position={Position.Left} id="feed-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/><Handle type="source" position={Position.Top} id="vapor-top" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/><Handle type="source" position={Position.Bottom} id="liquid-bottom" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/></div> ); };
+  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="0.5" y="20.5" width={width-1} height={height-41} rx={16} ry={16} fill="url(#metalGradient)" stroke="#000"/><text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle" fill="#000">{label}</text></svg><Handle type="target" position={Position.Left} id="feed-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/><Handle type="source" position={Position.Top} id="vapor-top" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/><Handle type="source" position={Position.Bottom} id="liquid-bottom" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/></div> ); };
 const HorizontalKODrumNode = ({ data }) => { const { width=180,height=70,label="KO Drum (Horiz)" }=data||{}; return (
-  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="0.5" y="10.5" width={width-1} height={height-21} rx={height/2} ry={height/2} fill="url(#metalGradient)" stroke="#000"/><line x1={width*0.2} x2={width*0.8} y1={height/2} y2={height/2} stroke="#000" opacity=".3"/><text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle">{label}</text></svg><Handle type="target" position={Position.Left} id="feed-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/><Handle type="source" position={Position.Top} id="vapor-top" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/><Handle type="source" position={Position.Bottom} id="liquid-bottom" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/></div> ); };
+  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="0.5" y="10.5" width={width-1} height={height-21} rx={height/2} ry={height/2} fill="url(#metalGradient)" stroke="#000"/><line x1={width*0.2} x2={width*0.8} y1={height/2} y2={height/2} stroke="#000" opacity=".3"/><text x={width/2} y={height-6} fontSize="12" fontWeight={600} textAnchor="middle" fill="#000">{label}</text></svg><Handle type="target" position={Position.Left} id="feed-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/><Handle type="source" position={Position.Top} id="vapor-top" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/><Handle type="source" position={Position.Bottom} id="liquid-bottom" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/></div> ); };
 
 // Misc equipment
 const TeeJunctionNode = ({ data }) => { const { label="Tee" }=data||{}; return (
@@ -1479,24 +1660,163 @@ const TeeJunctionNode = ({ data }) => { const { label="Tee" }=data||{}; return (
     <svg width="70" height="50"><SvgDefs />
       <path d="M10 25 L60 25 M35 10 L35 40" stroke="#000" strokeWidth="4" />
     </svg>
-    <div style={{ fontSize:12, fontWeight:600 }}>{label}</div>
+    <div style={{ fontSize:12, fontWeight:600, color: "#000" }}>{label}</div>
     <Handle type="target" position={Position.Left} id="in-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }} />
     <Handle type="source" position={Position.Right} id="out-1-right" style={{ top:"30%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
     <Handle type="source" position={Position.Right} id="out-2-right" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
     <Handle type="source" position={Position.Right} id="out-3-right" style={{ top:"80%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
   </div> ); };
-const FilterStrainerNode = ({ data }) => { const { width=110,height=70,label="Filter" }=data||{}; return (
-  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="10" y="10" width={width-20} height={height-20} rx={10} ry={10} fill="#fff" stroke="#000"/><path d={`M 20 20 L ${width-20} ${height-20}`} stroke="#000" opacity=".4"/><path d={`M 20 ${height-20} L ${width-20} 20`} stroke="#000" opacity=".4"/></svg><div style={{ fontSize:12, fontWeight:600, textAlign:"center" }}>{label}</div><Handle type="target" position={Position.Left} id="in-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/><Handle type="source" position={Position.Right} id="out-right" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/></div> ); };
-const CycloneNode = ({ data }) => { const { width=90,height=120,label="Cyclone" }=data||{}; return (
-  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><path d={`M ${width/2} 10 L ${width-20} ${height-40} L 20 ${height-40} Z`} fill="#fff" stroke="#000"/><rect x={width/2-8} y={height-40} width={16} height={24} fill="#fff" stroke="#000"/></svg><div style={{ fontSize:12, fontWeight:600, textAlign:"center" }}>{label}</div><Handle type="target" position={Position.Left} id="feed-left" style={{ top:"40%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/><Handle type="source" position={Position.Top} id="vapor-top" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/><Handle type="source" position={Position.Bottom} id="liquid-bottom" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/></div> ); };
-const AdsorberNode = ({ data }) => { const { width=100,height=160,label="Adsorber" }=data||{}; return (
-  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="10" y="10" width={width-20} height={height-20} rx={20} ry={20} fill="url(#metalGradient)" stroke="#000"/><text x={width/2} y={height/2} fontSize="10" textAnchor="middle" opacity=".6">BED</text></svg><div style={{ fontSize:12, fontWeight:600, textAlign:"center" }}>{label}</div><Handle type="target" position={Position.Left} id="in-left" style={{ top:"60%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/><Handle type="source" position={Position.Right} id="out-right" style={{ top:"60%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/></div> ); };
-const MembraneNode = ({ data }) => { const { width=140,height=80,label="Membrane" }=data||{}; return (
-  <div style={{ width, height }}><svg width={width} height={height}><SvgDefs /><rect x="0.5" y="10.5" width={width-1} height={height-21} rx={10} ry={10} fill="#fff" stroke="#000"/><path d={`M ${width/2} 12 L ${width/2} ${height-12}`} stroke="#000" strokeDasharray="4 4"/><path d={`M ${width/2-16} ${height/2} L ${width/2+16} ${height/2}`} stroke="#000" markerEnd="url(#arrow)"/></svg><div style={{ fontSize:12, fontWeight:600, textAlign:"center" }}>{label}</div><Handle type="target" position={Position.Left} id="in-left" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/><Handle type="source" position={Position.Right} id="out-right" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/></div> ); };
+const FilterStrainerNode = ({ data }) => { 
+  const { width=110,height=70,label="Filter" }=data||{};
+  
+  // Calculate dynamic label dimensions with text wrapping
+  const maxLabelWidth = Math.min(200, width - 10);
+  const labelDimensions = calculateLabelDimensions(label, maxLabelWidth, 60, 20);
+  const labelX = Math.max(5, (width - labelDimensions.width) / 2);
+  const labelY = height - labelDimensions.height - 5;
+  
+  return (
+    <div style={{ width, height }}>
+      <svg width={width} height={height}>
+        <SvgDefs />
+        <rect x="10" y="10" width={width-20} height={height-20} rx={10} ry={10} fill="#fff" stroke="#000"/>
+        <path d={`M 20 20 L ${width-20} ${height-20}`} stroke="#000" opacity=".4"/>
+        <path d={`M 20 ${height-20} L ${width-20} 20`} stroke="#000" opacity=".4"/>
+        {/* Dynamic Multi-line Label */}
+        <rect x={labelX} y={labelY} width={labelDimensions.width} height={labelDimensions.height} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
+        {labelDimensions.lines.map((line, index) => (
+          <text 
+            key={index}
+            x={index === 0 ? width/2 : labelX + 8} 
+            y={labelY + 12 + (index * 16)} 
+            fontSize="12" 
+            fontWeight={600} 
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
+          >
+            {line}
+          </text>
+        ))}
+      </svg>
+      <Handle type="target" position={Position.Left} id="in-left" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
+      <Handle type="source" position={Position.Right} id="out-right" style={{ top:"50%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
+    </div> 
+  ); 
+};
+const CycloneNode = ({ data }) => { 
+  const { width=90,height=120,label="Cyclone" }=data||{};
+  
+  // Calculate dynamic label dimensions with text wrapping
+  const maxLabelWidth = Math.min(200, width - 10);
+  const labelDimensions = calculateLabelDimensions(label, maxLabelWidth, 60, 20);
+  const labelX = Math.max(5, (width - labelDimensions.width) / 2);
+  const labelY = height - labelDimensions.height - 5;
+  
+  return (
+    <div style={{ width, height }}>
+      <svg width={width} height={height}>
+        <SvgDefs />
+        <path d={`M ${width/2} 10 L ${width-20} ${height-40} L 20 ${height-40} Z`} fill="#fff" stroke="#000"/>
+        <rect x={width/2-8} y={height-40} width={16} height={24} fill="#fff" stroke="#000"/>
+        {/* Dynamic Multi-line Label */}
+        <rect x={labelX} y={labelY} width={labelDimensions.width} height={labelDimensions.height} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
+        {labelDimensions.lines.map((line, index) => (
+          <text 
+            key={index}
+            x={index === 0 ? width/2 : labelX + 8} 
+            y={labelY + 12 + (index * 16)} 
+            fontSize="12" 
+            fontWeight={600} 
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
+          >
+            {line}
+          </text>
+        ))}
+      </svg>
+      <Handle type="target" position={Position.Left} id="feed-left" style={{ top:"40%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
+      <Handle type="source" position={Position.Top} id="vapor-top" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
+      <Handle type="source" position={Position.Bottom} id="liquid-bottom" style={{ left:"50%", transform:"translateX(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
+    </div> 
+  ); 
+};
+const AdsorberNode = ({ data }) => { 
+  const { width=100,height=160,label="Adsorber" }=data||{};
+  
+  // Calculate dynamic label dimensions with text wrapping
+  const maxLabelWidth = Math.min(200, width - 10);
+  const labelDimensions = calculateLabelDimensions(label, maxLabelWidth, 60, 20);
+  const labelX = Math.max(5, (width - labelDimensions.width) / 2);
+  const labelY = height - labelDimensions.height - 5;
+  
+  return (
+    <div style={{ width, height }}>
+      <svg width={width} height={height}>
+        <SvgDefs />
+        <rect x="10" y="10" width={width-20} height={height-20} rx={20} ry={20} fill="url(#metalGradient)" stroke="#000"/>
+        <text x={width/2} y={height/2} fontSize="10" textAnchor="middle" opacity=".6" fill="#000">BED</text>
+        {/* Dynamic Multi-line Label */}
+        <rect x={labelX} y={labelY} width={labelDimensions.width} height={labelDimensions.height} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
+        {labelDimensions.lines.map((line, index) => (
+          <text 
+            key={index}
+            x={index === 0 ? width/2 : labelX + 8} 
+            y={labelY + 12 + (index * 16)} 
+            fontSize="12" 
+            fontWeight={600} 
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
+          >
+            {line}
+          </text>
+        ))}
+      </svg>
+      <Handle type="target" position={Position.Left} id="in-left" style={{ top:"60%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
+      <Handle type="source" position={Position.Right} id="out-right" style={{ top:"60%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
+    </div> 
+  ); 
+};
+const MembraneNode = ({ data }) => { 
+  const { width=140,height=80,label="Membrane" }=data||{};
+  
+  // Calculate dynamic label dimensions with text wrapping
+  const maxLabelWidth = Math.min(200, width - 10);
+  const labelDimensions = calculateLabelDimensions(label, maxLabelWidth, 60, 20);
+  const labelX = Math.max(5, (width - labelDimensions.width) / 2);
+  const labelY = height - labelDimensions.height - 5;
+  
+  return (
+    <div style={{ width, height }}>
+      <svg width={width} height={height}>
+        <SvgDefs />
+        <rect x="0.5" y="10.5" width={width-1} height={height-21} rx={10} ry={10} fill="#fff" stroke="#000"/>
+        <path d={`M ${width/2} 12 L ${width/2} ${height-12}`} stroke="#000" strokeDasharray="4 4"/>
+        <path d={`M ${width/2-16} ${height/2} L ${width/2+16} ${height/2}`} stroke="#000" markerEnd="url(#arrow)"/>
+        {/* Dynamic Multi-line Label */}
+        <rect x={labelX} y={labelY} width={labelDimensions.width} height={labelDimensions.height} fill="rgba(255,255,255,0.85)" stroke="#000" rx="2"/>
+        {labelDimensions.lines.map((line, index) => (
+          <text 
+            key={index}
+            x={index === 0 ? width/2 : labelX + 8} 
+            y={labelY + 12 + (index * 16)} 
+            fontSize="12" 
+            fontWeight={600} 
+            textAnchor={index === 0 ? "middle" : "start"}
+            fill="#000"
+          >
+            {line}
+          </text>
+        ))}
+      </svg>
+      <Handle type="target" position={Position.Left} id="in-left" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
+      <Handle type="source" position={Position.Right} id="out-right" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
+    </div> 
+  ); 
+};
 
 // Instrumentation bubbles
 const InstrumentBubble = ({ code="TI" }) => (
-  <svg width="28" height="28"><circle cx="14" cy="14" r="12" fill="#fff" stroke="#000"/><text x="14" y="18" fontSize="10" textAnchor="middle" fontWeight={700}>{code}</text></svg>
+  <svg width="28" height="28"><circle cx="14" cy="14" r="12" fill="#fff" stroke="#000"/><text x="14" y="18" fontSize="10" textAnchor="middle" fontWeight={700} fill="#000">{code}</text></svg>
 );
 const FCBubbleNode = () => <div style={{display:'grid',placeItems:'center'}}><InstrumentBubble code="FC" /></div>;
 const PCBubbleNode = () => <div style={{display:'grid',placeItems:'center'}}><InstrumentBubble code="PC" /></div>;
@@ -1716,6 +2036,7 @@ const nodeTypes = {
   superheater: HeaterCoolerNode, // Superheater to heater/cooler
   desuperheater: HeaterCoolerNode, // Desuperheater to heater/cooler
   reboiler: KettleReboilerNode, // Reboiler to kettle reboiler
+  furnace: FiredHeaterNode, // Furnace to fired heater
   expander: TurbineNode, // Expander to turbine
   fan: CompressorNode, // Fan to compressor
   blower: CompressorNode, // Blower to compressor
