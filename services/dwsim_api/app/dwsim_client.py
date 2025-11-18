@@ -138,9 +138,16 @@ class DWSIMClient:
 
             import clr  # type: ignore
 
-            clr.AddReference(str(self._lib_path / 'DWSIM.Automation.dll'))
-            clr.AddReference(str(self._lib_path / 'DWSIM.Interfaces.dll'))
-            clr.AddReference(str(self._lib_path / 'CapeOpen.dll'))
+            # Add all DLLs in the DWSIM directory to resolve dependencies
+            # DWSIM has many interdependent DLLs (e.g., ThermoCS.dll, property packages, etc.)
+            # Loading all DLLs ensures all dependencies are available
+            for dll_file in self._lib_path.glob('*.dll'):
+                try:
+                    clr.AddReference(str(dll_file))
+                    logger.debug(f"Added reference to {dll_file.name}")
+                except Exception as e:
+                    # Some DLLs may fail to load (e.g., native dependencies), which is OK
+                    logger.debug(f"Could not add reference to {dll_file.name}: {e}")
 
             from DWSIM.Automation import Automation3  # type: ignore
 
