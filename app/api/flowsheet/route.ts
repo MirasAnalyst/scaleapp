@@ -225,12 +225,22 @@ export async function POST(request: NextRequest) {
     IMPORTANT: For separation processes, create separate equipment units for each product stream (e.g., separate pumps for gas, oil, water products from a separator).
     
     🚨 ABSOLUTE RULE: NO COMPLETELY ISOLATED EQUIPMENT ALLOWED
-    - If you create a heat exchanger, pump, compressor, separator, or any equipment, it MUST be connected
+    - If you create a heat exchanger, pump, compressor, separator, column, or ANY equipment, it MUST be connected
     - Every piece of equipment must have at least one connection (incoming OR outgoing)
     - Equipment with NO connections at all will cause the generation to fail
     - VALID PATTERNS: Feed equipment (only outgoing), Product equipment (only incoming), Process equipment (both incoming and outgoing)
     - INVALID PATTERN: Equipment with no connections at all
     - Either connect all equipment to the process flow or don't create it
+    
+    🏭 COLUMN CONNECTIVITY (CRITICAL):
+    - ALL columns (distillation, vacuum, packed, absorber, stripper) MUST have connections
+    - Every column MUST have at least one feed inlet connected (feed-stage-10, feed-left, etc.)
+    - Every column MUST have at least one product outlet connected (overhead-top, bottoms-bottom, etc.)
+    - Vacuum columns are process equipment and MUST be connected to feed streams and product streams
+    - If you create a vacuum column, you MUST create edges connecting:
+      * Feed stream TO the column (edge from source equipment to column with targetHandle like "feed-stage-10")
+      * Product streams FROM the column (edges from column with sourceHandle like "overhead-top" or "bottoms-bottom" to destination equipment)
+    - Never create a column without creating the corresponding edges that connect it to the process flow
     
     Include relevant process parameters in node data.
     Create meaningful connections between equipment.
@@ -247,10 +257,12 @@ export async function POST(request: NextRequest) {
     - Keep main process streams only (no utilities or signal lines)
     - Streams connect at LOGICALLY CORRECT physical locations (top/bottom/sides)
     - ALL equipment has at least one connection (NO completely isolated units)
+    - ALL columns (distillation, vacuum, packed, absorber, stripper) have feed and product edges
     - Process flow is COMPLETE and CONTINUOUS from feed to products
     - Feed equipment can have only outgoing connections (VALID)
     - Product equipment can have only incoming connections (VALID)
     - Process equipment should have both incoming and outgoing connections (VALID)
+    - CRITICAL: Every node in the "nodes" array must appear in at least one edge in the "edges" array
 
     📋 EXAMPLE (three-phase separation with proper spacing):
     {
@@ -569,38 +581,59 @@ export async function POST(request: NextRequest) {
         );
       }
       
+      // Build detailed list of isolated equipment with their types
+      const isolatedEquipmentDetails = trulyIsolatedNodes.map(n => {
+        const nodeType = n.type || 'unknown';
+        const nodeLabel = n.data?.label || n.id;
+        return `- ${n.id} (${nodeType}, "${nodeLabel}")`;
+      }).join('\n');
+      
       // First attempt failed, retry with enhanced prompt
       const enhancedPrompt = `${prompt}
 
 🚨 CRITICAL ERROR: The previous attempt created isolated equipment that is not connected to the main process flow. You MUST follow these rules EXACTLY:
 
+ISOLATED EQUIPMENT DETECTED (these have NO connections at all):
+${isolatedEquipmentDetails}
+
 🚨 ABSOLUTE RULE: ALL EQUIPMENT MUST BE CONNECTED
 - Every piece of equipment MUST be connected to at least one other piece of equipment via edges
 - NO equipment can exist in complete isolation (no connections at all)
-- If you create equipment, you MUST connect it to the process flow
-- Either connect isolated equipment to the nearest logical process path or remove it
+- If you create equipment, you MUST create edges connecting it to the process flow
+- Either connect isolated equipment to the nearest logical process path or remove it entirely
 
 🔧 MANDATORY CONNECTIVITY REQUIREMENTS:
-- Every separator must have feed inlet and product outlets connected
-- Every pump must have suction inlet and discharge outlet connected
-- Every compressor must have suction inlet and discharge outlet connected
-- Every heat exchanger must have both hot and cold side connections
-- Every column must have feed inlet and product outlets connected
-- Every tank must have inlet and outlet connections (unless it's a final product tank)
+- Every separator must have feed inlet and product outlets connected via edges
+- Every pump must have suction inlet and discharge outlet connected via edges
+- Every compressor must have suction inlet and discharge outlet connected via edges
+- Every heat exchanger must have both hot and cold side connections via edges
+- Every column (including vacuum columns) MUST have:
+  * At least one feed inlet edge (from another equipment TO the column)
+  * At least one product outlet edge (from the column TO another equipment)
+- Every tank must have inlet and outlet connections via edges (unless it's a final product tank)
+
+🏭 CRITICAL: COLUMN CONNECTIVITY
+- If you created a column (distillation, vacuum, packed, absorber, stripper), you MUST create edges for it
+- For each column, create edges in the "edges" array:
+  * Feed edge: {"source": "source-equipment-id", "sourceHandle": "outlet-handle", "target": "column-id", "targetHandle": "feed-stage-10"}
+  * Product edge: {"source": "column-id", "sourceHandle": "overhead-top", "target": "destination-equipment-id", "targetHandle": "inlet-handle"}
+- Example: If you have "col-vacuum-1", create edges connecting it:
+  * One edge FROM another equipment TO col-vacuum-1 (feed)
+  * One or more edges FROM col-vacuum-1 TO other equipment (products)
 
 📋 VALID CONNECTIVITY PATTERNS:
 - Feed equipment: Only outgoing connections (no incoming connections) - THIS IS VALID
 - Product equipment: Only incoming connections (no outgoing connections) - THIS IS VALID
 - Process equipment: Both incoming and outgoing connections - THIS IS VALID
-- Isolated equipment: No connections at all - THIS IS INVALID
+- Isolated equipment: No connections at all - THIS IS INVALID AND WILL CAUSE FAILURE
 
 📋 EXAMPLE OF CORRECT CONNECTIVITY:
-- separator3p: feed → separator → gas/oil/water → pumps/compressors
-- heat exchanger: hot stream → exchanger → cooled stream
-- column: feed → column → overhead/bottoms → next equipment
-- pump: suction → pump → discharge → next equipment
+- separator3p: feed → separator → gas/oil/water → pumps/compressors (with edges connecting each step)
+- heat exchanger: hot stream → exchanger → cooled stream (with edges)
+- column: feed → column → overhead/bottoms → next equipment (with edges for feed, overhead, and bottoms)
+- vacuum column: feed → col-vacuum-1 → overhead/bottoms → next equipment (with edges connecting all)
 
-🚨 FINAL WARNING: If you create any equipment with NO connections at all, the generation will fail. Every piece of equipment must be part of the continuous process flow.`;
+🚨 FINAL WARNING: If you create any equipment with NO connections at all, the generation will fail. Every piece of equipment must be part of the continuous process flow. You MUST create edges in the "edges" array for every piece of equipment you create.`;
 
       // Recursive call with retry count
       const retryRequest = new NextRequest(request.url, {

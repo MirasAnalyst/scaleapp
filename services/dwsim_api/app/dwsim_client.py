@@ -23,7 +23,24 @@ class DWSIMClient:
     def __init__(self) -> None:
         self._rng = random.Random(42)
         self._automation = None
-        self._lib_path = Path(os.getenv('DWSIM_LIB_PATH', '/Applications/DWSIM.app/Contents/MonoBundle'))
+        
+        # Detect platform and set appropriate default path
+        import platform
+        system = platform.system()
+        if system == 'Windows':
+            # Common Windows DWSIM installation paths
+            default_paths = [
+                Path('C:/Program Files/DWSIM'),
+                Path('C:/Program Files (x86)/DWSIM'),
+                Path(os.path.expanduser('~/DWSIM')),
+            ]
+            default_path = next((p for p in default_paths if p.exists()), Path('C:/Program Files/DWSIM'))
+        elif system == 'Darwin':  # macOS
+            default_path = Path('/Applications/DWSIM.app/Contents/MonoBundle')
+        else:  # Linux
+            default_path = Path('/usr/lib/dwsim')  # Common Linux path
+        
+        self._lib_path = Path(os.getenv('DWSIM_LIB_PATH', str(default_path)))
         self._template_path = os.getenv('DWSIM_TEMPLATE_PATH')
         self._try_initialize_automation()
 
@@ -86,7 +103,22 @@ class DWSIMClient:
         
         try:
             if not self._lib_path.exists():
-                logger.warning("DWSIM library path %s not found; keeping mock backend", self._lib_path)
+                logger.warning(
+                    "DWSIM library path %s not found; keeping mock backend.\n"
+                    "On Windows, set DWSIM_LIB_PATH to your DWSIM installation directory "
+                    "(e.g., 'C:\\Program Files\\DWSIM' or wherever DWSIM.Automation.dll is located).",
+                    self._lib_path
+                )
+                return
+            
+            # Check if DWSIM.Automation.dll exists
+            automation_dll = self._lib_path / 'DWSIM.Automation.dll'
+            if not automation_dll.exists():
+                logger.warning(
+                    "DWSIM.Automation.dll not found in %s; keeping mock backend.\n"
+                    "Please set DWSIM_LIB_PATH to the directory containing DWSIM.Automation.dll.",
+                    self._lib_path
+                )
                 return
 
             # Don't set DOTNET_SYSTEM_GLOBALIZATION_INVARIANT - DWSIM needs culture support
@@ -95,44 +127,68 @@ class DWSIMClient:
 
             import pythonnet
             from pathlib import Path
+            import platform
             
-            # Try CoreCLR first (if .NET SDK is installed)
-            dotnet_root = os.getenv('DOTNET_ROOT', os.path.expanduser('~/.dotnet'))
-            if Path(dotnet_root).exists():
+            system = platform.system()
+            
+            # On Windows, use .NET Framework (not CoreCLR) - DWSIM requires System.Windows.Forms
+            if system == 'Windows':
+                # Clear DOTNET_ROOT to prevent CoreCLR from being used
+                # DWSIM requires .NET Framework which has System.Windows.Forms
+                old_dotnet_root = os.environ.pop('DOTNET_ROOT', None)
+                if old_dotnet_root:
+                    logger.debug("Cleared DOTNET_ROOT to force .NET Framework instead of CoreCLR")
+                
+                # On Windows, pythonnet should use .NET Framework (which includes System.Windows.Forms)
+                # Don't set PYTHONNET_RUNTIME - let pythonnet auto-detect .NET Framework
                 try:
-                    os.environ['DOTNET_ROOT'] = dotnet_root
-                    os.environ['PYTHONNET_RUNTIME'] = 'coreclr'
-                    pythonnet.load("coreclr")
-                    logger.debug("Attempting to load DWSIM with CoreCLR runtime")
-                except Exception as coreclr_exc:
-                    logger.debug("CoreCLR runtime failed, trying Mono: %s", coreclr_exc)
-                    # Fall through to Mono attempt
-            
-            # Try Mono runtime (works on Linux/Windows, not macOS ARM64)
-            official_mono = '/Library/Frameworks/Mono.framework/Versions/Current/lib/libmonosgen-2.0.dylib'
-            homebrew_mono = '/opt/homebrew/lib/libmono-2.0.dylib'
-            
-            libmono_path = os.getenv('PYTHONNET_LIBMONO')
-            if not libmono_path:
-                # Try official Mono framework first, then Homebrew
-                if Path(official_mono).exists():
-                    libmono_path = official_mono
-                elif Path(homebrew_mono).exists():
-                    libmono_path = homebrew_mono
-            
-            if libmono_path:
-                os.environ['PYTHONNET_RUNTIME'] = 'mono'
-                try:
-                    pythonnet.load("mono", libmono=libmono_path)
-                except Exception as mono_exc:
-                    logger.debug("Failed to load Mono with explicit path: %s", mono_exc)
-                    # Try auto-discovery
+                    # Try without setting runtime - pythonnet should auto-detect .NET Framework
+                    pythonnet.load()
+                    logger.info("Loaded .NET Framework runtime (auto-detected)")
+                except Exception as auto_exc:
+                    logger.debug("Auto-detection failed, trying Mono: %s", auto_exc)
                     try:
+                        os.environ['PYTHONNET_RUNTIME'] = 'mono'
                         pythonnet.load("mono")
-                    except Exception:
-                        raise RuntimeError(f"Failed to initialize .NET runtime. Mono path: {libmono_path}, Error: {mono_exc}") from mono_exc
-            else:
-                # Try auto-discovery
+                        logger.info("Loaded Mono runtime on Windows")
+                    except Exception as mono_exc:
+                        logger.error("Failed to initialize .NET runtime on Windows. Auto-detection failed: %s, Mono failed: %s", auto_exc, mono_exc)
+                        raise RuntimeError(
+                            f"Failed to initialize .NET runtime on Windows. "
+                            f"Auto-detection: {auto_exc}, Mono: {mono_exc}. "
+                            f"DWSIM requires .NET Framework 4.x (not CoreCLR). "
+                            f"Please install .NET Framework 4.x from Microsoft."
+                        ) from mono_exc
+            elif system == 'Darwin':  # macOS
+                # macOS-specific Mono paths (but won't work on Apple Silicon)
+                official_mono = '/Library/Frameworks/Mono.framework/Versions/Current/lib/libmonosgen-2.0.dylib'
+                homebrew_mono = '/opt/homebrew/lib/libmono-2.0.dylib'
+                
+                libmono_path = os.getenv('PYTHONNET_LIBMONO')
+                if not libmono_path:
+                    # Try official Mono framework first, then Homebrew
+                    if Path(official_mono).exists():
+                        libmono_path = official_mono
+                    elif Path(homebrew_mono).exists():
+                        libmono_path = homebrew_mono
+                
+                if libmono_path:
+                    os.environ['PYTHONNET_RUNTIME'] = 'mono'
+                    try:
+                        pythonnet.load("mono", libmono=libmono_path)
+                    except Exception as mono_exc:
+                        logger.debug("Failed to load Mono with explicit path: %s", mono_exc)
+                        # Try auto-discovery
+                        try:
+                            pythonnet.load("mono")
+                        except Exception:
+                            raise RuntimeError(f"Failed to initialize .NET runtime. Mono path: {libmono_path}, Error: {mono_exc}") from mono_exc
+                else:
+                    # Try auto-discovery
+                    os.environ['PYTHONNET_RUNTIME'] = 'mono'
+                    pythonnet.load("mono")
+            else:  # Linux
+                # On Linux, try auto-discovery (Mono should be in PATH)
                 os.environ['PYTHONNET_RUNTIME'] = 'mono'
                 pythonnet.load("mono")
 
@@ -141,26 +197,71 @@ class DWSIMClient:
             # Add all DLLs in the DWSIM directory to resolve dependencies
             # DWSIM has many interdependent DLLs (e.g., ThermoCS.dll, property packages, etc.)
             # Loading all DLLs ensures all dependencies are available
+            # Load DWSIM.Automation.dll first, then other DLLs
+            automation_dll = self._lib_path / 'DWSIM.Automation.dll'
+            if automation_dll.exists():
+                try:
+                    clr.AddReference(str(automation_dll))
+                    logger.debug(f"Added reference to {automation_dll.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to add reference to {automation_dll.name}: {e}")
+                    raise
+            
+            # Load other DLLs (but skip ones that are known to cause issues)
+            skip_dlls = {'DWSIM.Automation.dll'}  # Already loaded
             for dll_file in self._lib_path.glob('*.dll'):
+                if dll_file.name in skip_dlls:
+                    continue
                 try:
                     clr.AddReference(str(dll_file))
                     logger.debug(f"Added reference to {dll_file.name}")
                 except Exception as e:
-                    # Some DLLs may fail to load (e.g., native dependencies), which is OK
+                    # Some DLLs may fail to load (e.g., native dependencies, UI components), which is OK
                     logger.debug(f"Could not add reference to {dll_file.name}: {e}")
 
             from DWSIM.Automation import Automation3  # type: ignore
 
             # Attempt to instantiate - this may fail on macOS due to System.Windows.Forms dependency
-            self._automation = Automation3()
-            logger.info("Loaded DWSIM automation from %s", self._lib_path)
+            try:
+                self._automation = Automation3()
+                logger.info("Loaded DWSIM automation from %s", self._lib_path)
+            except Exception as inst_exc:
+                logger.error("Failed to instantiate Automation3: %s", inst_exc, exc_info=True)
+                raise
         except Exception as exc:  # pragma: no cover - env-specific failures
-            logger.warning(
-                "Failed to load DWSIM automation: %s\n"
-                "Note: DWSIM automation may not work on macOS due to System.Windows.Forms dependency. "
-                "See DWSIM_RUNTIME_ISSUES.md for alternatives.",
-                exc
-            )
+            import platform
+            system = platform.system()
+            
+            # Log the full exception details first
+            logger.exception("Exception during DWSIM automation initialization:")
+            
+            if system == 'Windows':
+                logger.warning(
+                    "Failed to load DWSIM automation on Windows.\n"
+                    f"Full error: {exc}\n"
+                    "Troubleshooting:\n"
+                    "1. Ensure DWSIM_LIB_PATH points to your DWSIM installation directory\n"
+                    "2. Verify DWSIM.Automation.dll exists in that directory\n"
+                    "3. Ensure .NET Framework 4.x is installed (DWSIM requires it)\n"
+                    "4. Check that all DWSIM DLL dependencies are in the same directory\n"
+                    "5. Try running as Administrator if permission issues occur\n"
+                    "6. Make sure you're NOT using CoreCLR - DWSIM needs .NET Framework\n"
+                    "Example: set DWSIM_LIB_PATH='C:\\Program Files\\DWSIM'",
+                    exc_info=True
+                )
+            elif system == 'Darwin':
+                logger.warning(
+                    f"Failed to load DWSIM automation on macOS: {exc}\n"
+                    "Note: DWSIM automation may not work on macOS due to System.Windows.Forms dependency. "
+                    "See DWSIM_RUNTIME_ISSUES.md for alternatives.",
+                    exc_info=True
+                )
+            else:
+                logger.warning(
+                    f"Failed to load DWSIM automation on Linux: {exc}\n"
+                    "Ensure Mono is installed and DWSIM_LIB_PATH is set correctly.",
+                    exc_info=True
+                )
             self._automation = None
 
     def _run_dwsim(self, payload: schemas.FlowsheetPayload) -> schemas.SimulationResult:

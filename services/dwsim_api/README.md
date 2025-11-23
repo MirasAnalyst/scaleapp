@@ -55,47 +55,69 @@ See `DWSIM_RUNTIME_ISSUES.md` for details and alternatives.
 
 ### Runtime Configuration (Windows/Linux Only)
 
-DWSIM requires Mono (a .NET runtime) and pythonnet to load the DWSIM.Automation.dll.
+DWSIM requires .NET Framework (Windows) or Mono (Linux) and pythonnet to load the DWSIM.Automation.dll.
 
-**Install Mono (if not already installed):**
-```bash
-# Linux
-sudo apt-get install mono-complete  # Debian/Ubuntu
-# OR
-brew install mono  # macOS (but won't work for automation on Apple Silicon)
+**Windows Setup:**
+
+1. **Install DWSIM** (if not already installed):
+   - Download and install DWSIM from the official website
+   - Note the installation directory (typically `C:\Program Files\DWSIM` or `C:\Program Files (x86)\DWSIM`)
+
+2. **Install .NET Framework** (usually pre-installed on Windows):
+   - DWSIM requires .NET Framework 4.x
+   - If missing, download from Microsoft
+
+3. **Starting the server on Windows:**
+```powershell
+cd services\dwsim_api
+# Activate virtual environment
+.venv\Scripts\activate
+
+# Set DWSIM library path (adjust to your installation)
+$env:DWSIM_LIB_PATH="C:\Program Files\DWSIM"
+# OR if DWSIM is in a different location:
+# $env:DWSIM_LIB_PATH="C:\Program Files (x86)\DWSIM"
+
+# Optional: point to a base flowsheet template
+# $env:DWSIM_TEMPLATE_PATH="C:\path\to\blank-or-base.dwxml"
+
+# Start the server
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8081
 ```
 
-**Starting the server:**
+**Linux Setup:**
 
-You can either use the provided startup script (recommended) or set environment variables manually:
-
-**Option 1: Using the startup script (recommended)**
+1. **Install Mono:**
 ```bash
-cd services/dwsim_api
-./start_server.sh
+# Debian/Ubuntu
+sudo apt-get install mono-complete
 ```
 
-**Option 2: Manual startup with environment variables**
+2. **Starting the server on Linux:**
 ```bash
 cd services/dwsim_api
 source .venv/bin/activate
 
-# Required: DWSIM library path
-export DWSIM_LIB_PATH="/Applications/DWSIM.app/Contents/MonoBundle"
+# Required: DWSIM library path (adjust to your installation)
+export DWSIM_LIB_PATH="/usr/lib/dwsim"  # or wherever DWSIM is installed
 
 # Required: pythonnet/Mono configuration
 export PYTHONNET_RUNTIME=mono
-# Prefer official Mono framework (installed via .pkg), fallback to Homebrew
-export PYTHONNET_LIBMONO="/Library/Frameworks/Mono.framework/Versions/Current/lib/libmonosgen-2.0.dylib"  # Official Mono
-# OR if using Homebrew Mono:
-# export PYTHONNET_LIBMONO="/opt/homebrew/lib/libmono-2.0.dylib"
-export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
 
 # Optional: point to a base flowsheet template
 export DWSIM_TEMPLATE_PATH="/path/to/blank-or-base.dwxml"
 
-uvicorn app.main:app --reload --port 8081
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8081
 ```
+
+**macOS Setup (Mock Backend Only):**
+
+On macOS, the service automatically uses a mock backend. The automation DLLs cannot be loaded due to platform limitations.
+
+**Finding Your DWSIM Installation Path:**
+
+- **Windows**: Check `C:\Program Files\DWSIM` or `C:\Program Files (x86)\DWSIM`. Look for `DWSIM.Automation.dll` in that directory.
+- **Linux**: Typically `/usr/lib/dwsim` or `/opt/dwsim`. Use `find /usr -name "DWSIM.Automation.dll" 2>/dev/null` to locate it.
 
 **Important:** pythonnet requires the **official Mono framework** (installed via .pkg from mono-project.com), not the Homebrew version. The official framework installs to `/Library/Frameworks/Mono.framework/...` which pythonnet can find automatically.
 
