@@ -1,0 +1,42 @@
+{
+  "name": "simple-test",
+  "units": [
+    {
+      "id": "pump-1",
+      "type": "pump",
+      "name": "Feed Pump",
+      "parameters": {
+        "x": 300,
+        "y": 200,
+        "pressure_rise": 100,
+        "efficiency": 0.75
+      }
+    }
+  ],
+  "streams": [
+    {
+      "id": "feed-1",
+      "name": "Feed Stream",
+      "target": "pump-1",
+      "properties": {
+        "temperature": 25,
+        "pressure": 101.3,
+        "flow_rate": 1000,
+        "composition": {
+          "Water": 1.0
+        }
+      }
+    },
+    {
+      "id": "product-1",
+      "name": "Product Stream",
+      "source": "pump-1",
+      "properties": {}
+    }
+  ],
+  "thermo": {
+    "package": "Peng-Robinson",
+    "components": ["Water"]
+  }
+}
+

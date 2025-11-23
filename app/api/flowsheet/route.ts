@@ -39,7 +39,7 @@ export interface FlowEdge {
 export interface FlowSheetData {
   nodes: FlowNode[];
   edges: FlowEdge[];
-  aspenInstructions: string;
+  dwsimInstructions: string;
   description: string;
 }
 
@@ -62,8 +62,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const systemPrompt = `You are a chemical engineering expert specializing in process flowsheets and Aspen HYSYS simulation. 
-    Convert natural language process descriptions into structured flowsheet data.
+    const systemPrompt = `You are a chemical engineering expert specializing in process flowsheets and DWSIM simulation. 
+    Convert natural language process descriptions into structured flowsheet data that can be executed in DWSIM.
+
+    IMPORTANT: Generate flowsheets compatible with DWSIM's capabilities. The flowsheet will be executed in DWSIM, not Aspen HYSYS.
+    Use DWSIM-supported unit operations, property packages, and parameter formats.
 
     Return ONLY valid JSON in this exact format:
     {
@@ -91,56 +94,71 @@ export async function POST(request: NextRequest) {
           "markerEnd": {"type": "arrowclosed", "width": 20, "height": 20, "color": "#6B7280"}
         }
       ],
-      "aspenInstructions": "Step-by-step Aspen HYSYS setup instructions",
+      "dwsimInstructions": "Step-by-step DWSIM setup instructions",
       "description": "Brief description of the process"
     }
 
-    Use these EXACT node types (case-sensitive):
-    - distillationColumn (for distillation columns)
-    - packedColumn (for packed columns)
-    - absorber (for absorption columns)
-    - stripper (for stripping columns)
-    - flashDrum (for flash drums)
-    - separator (for horizontal separators)
-    - separator3p (for 3-phase separators)
-    - tank (for storage tanks)
-    - horizontalVessel (for horizontal vessels)
-    - surgeDrum (for surge drums)
-    - knockoutDrumH (for knockout drums)
-    - heaterCooler (for heaters/coolers)
-    - shellTubeHX (for shell & tube heat exchangers)
-    - airCooler (for air coolers)
-    - kettleReboiler (for kettle reboilers)
-    - plateHX (for plate heat exchangers)
-    - doublePipeHX (for double-pipe heat exchangers)
-    - firedHeater (for fired heaters)
-    - cstr (for continuous stirred tank reactors)
-    - pfr (for plug flow reactors)
-    - gibbsReactor (for Gibbs reactors)
-    - equilibriumReactor (for equilibrium reactors)
-    - conversionReactor (for conversion reactors)
-    - batchReactor (for batch reactors)
-    - pump (for pumps)
-    - compressor (for compressors)
-    - turbine (for turbines)
-    - steamTurbine (for steam turbines)
-    - recipPump (for reciprocating pumps)
-    - recipCompressor (for reciprocating compressors)
-    - valve (for valves)
-    - controlValve (for control valves)
-    - checkValve (for check valves)
-    - prv (for pressure relief valves)
-    - throttleValve (for throttle valves)
-    - mixer (for mixers)
-    - splitter (for splitters)
-    - tee (for tee junctions)
-    - filter (for filters)
-    - cyclone (for cyclones)
-    - adsorber (for adsorbers)
-    - membrane (for membrane units)
-    - boiler (for boilers)
-    - condenser (for condensers)
-    - label (for text labels)
+    🧪 DWSIM-SUPPORTED UNIT OPERATIONS (use these EXACT types):
+    - distillationColumn (DistillationColumn - with reboiler and condenser)
+    - packedColumn (PackedColumn - packed distillation/absorption)
+    - absorber (AbsorptionColumn - gas absorption)
+    - stripper (StrippingColumn - liquid stripping)
+    - flashDrum (FlashDrum - flash separator)
+    - separator (Separator - 2-phase separator)
+    - separator3p (ThreePhaseSeparator - 3-phase separator)
+    - tank (Tank - storage tank)
+    - surgeDrum (SurgeDrum - surge drum)
+    - knockoutDrumH (KnockoutDrum - knockout drum)
+    - heaterCooler (Heater - heater/cooler)
+    - shellTubeHX (HeatExchanger - shell & tube HX)
+    - airCooler (AirCooler - air-cooled exchanger)
+    - kettleReboiler (KettleReboiler - kettle reboiler)
+    - firedHeater (FiredHeater - fired heater/furnace)
+    - cstr (CSTR - continuous stirred tank reactor)
+    - pfr (PFR - plug flow reactor)
+    - gibbsReactor (GibbsReactor - Gibbs free energy reactor)
+    - equilibriumReactor (EquilibriumReactor - equilibrium reactor)
+    - conversionReactor (ConversionReactor - conversion reactor)
+    - pump (Pump - centrifugal pump)
+    - compressor (Compressor - compressor)
+    - turbine (Turbine - expander/turbine)
+    - valve (Valve - control valve)
+    - mixer (Mixer - stream mixer)
+    - splitter (Splitter - stream splitter)
+    - filter (Filter - filter/strainer)
+    - cyclone (Cyclone - cyclone separator)
+    - adsorber (Adsorber - adsorption unit)
+    - membrane (Membrane - membrane separator)
+    - boiler (Boiler - boiler)
+    - condenser (Condenser - condenser)
+    - label (Label - text labels)
+
+    ⚠️ DWSIM LIMITATIONS - DO NOT USE (these will be mapped to alternatives):
+    - recipPump, recipCompressor (not supported - use pump/compressor instead)
+    - controlValve, checkValve, prv, throttleValve (use valve instead)
+    - plateHX, doublePipeHX (use shellTubeHX instead)
+    - batchReactor (use cstr instead)
+    - steamTurbine (use turbine instead)
+    - tee (use splitter instead)
+    - horizontalVessel (use tank or separator instead)
+
+    🔬 DWSIM PROPERTY PACKAGES (use in thermo.package):
+    - "Peng-Robinson" (default, recommended for hydrocarbons)
+    - "Soave-Redlich-Kwong" or "SRK" (for hydrocarbons)
+    - "NRTL" (for polar compounds, liquid-liquid)
+    - "UNIFAC" (for mixtures with limited data)
+    - "UNIQUAC" (for polar mixtures)
+    - "Lee-Kesler-Plöcker" (for hydrocarbons)
+    - "IAPWS-IF97" (for water/steam)
+    - "Chao-Seader" (for petroleum)
+    - "Grayson-Streed" (for petroleum)
+
+    📊 STREAM PROPERTIES (use in stream.data.properties):
+    - temperature: temperature in Celsius (required for feed streams)
+    - pressure: pressure in kPa (required for feed streams)
+    - flow_rate: mass flow in kg/h (optional, can be calculated)
+    - composition: mole fractions as object {"C1": 0.5, "C2": 0.3, ...} (required for feed streams)
+    - vapor_fraction: vapor fraction 0-1 (optional)
 
     🔌 PORT CONNECTIONS - Use these EXACT handle IDs for proper PHYSICAL positioning:
     
@@ -186,7 +204,7 @@ export async function POST(request: NextRequest) {
     - Separators: gas-top, oil-right, water-bottom for 3-phase; vapor-top, liquid-bottom for 2-phase
     - Rotating equipment: suction-left → discharge-right
     - Heat exchangers: never cross-connect hot/cold sides
-    - Auto-correct wrong ports and note corrections in aspenInstructions
+    - Auto-correct wrong ports and note corrections in dwsimInstructions
 
     🗺️ Layout (positions) & naming:
     - Place nodes left-to-right from feed to product (x: 0–1200, y: 0–1000)
@@ -211,15 +229,17 @@ export async function POST(request: NextRequest) {
     - Nodes: sep-1, pump-oil-1, comp-1, hx-01, col-dist-1, etc.
     - Streams: feed-01, oil-01, gas-01, water-01, overhead-01, bottoms-01, recycle-01, flare-01, steam-600kPa, cw-30C
     
-    When generating the flowsheet, always be detailed in the choice of equipment and unit operations, so that no major process equipment is missed. Include all unit operations that would normally appear in an Aspen HYSYS flowsheet to make the process operational (e.g., separators, pumps, compressors, heat exchangers, columns, reactors, valves, mixers, splitters).
-    Only include the main process material streams that connect these units (feed streams, product streams, and intermediate streams). Do not include auxiliary or utility streams (e.g., steam, cooling water, fuel gas, flare lines, drains, vents) and do not include controller signal lines. The flowsheet should focus on the complete core process pathway as it would appear in Aspen HYSYS.
+    When generating the flowsheet, always be detailed in the choice of equipment and unit operations, so that no major process equipment is missed. Include all unit operations that would normally appear in a DWSIM flowsheet to make the process operational (e.g., separators, pumps, compressors, heat exchangers, columns, reactors, valves, mixers, splitters).
+    Only include the main process material streams that connect these units (feed streams, product streams, and intermediate streams). Do not include auxiliary or utility streams (e.g., steam, cooling water, fuel gas, flare lines, drains, vents) and do not include controller signal lines. The flowsheet should focus on the complete core process pathway as it would appear in DWSIM.
+    
+    IMPORTANT: Use only DWSIM-supported unit operations listed above. If you need a unit type not in the list, use the closest alternative from the supported list.
     
     🔗 CONNECTIVITY REQUIREMENTS (MANDATORY):
     - EVERY piece of equipment MUST be connected to at least one other piece of equipment via stream lines
     - NO equipment should be completely isolated (no connections at all)
     - Create a COMPLETE and CONTINUOUS process flow from feed to final products
     - All equipment must be part of the main process pathway - no standalone units
-    - Ensure that all equipment/unit operations are properly connected with process stream lines, in the same way they would be interconnected in an Aspen HYSYS process flowsheet, so the result forms a complete and continuous process flow
+    - Ensure that all equipment/unit operations are properly connected with process stream lines, in the same way they would be interconnected in a DWSIM process flowsheet, so the result forms a complete and continuous process flow
     - If you create multiple equipment pieces, they MUST all be connected in a logical process sequence
     CRITICAL: Never create edges that connect a node to itself (source and target cannot be the same node). All edges must connect different equipment units.
     IMPORTANT: For separation processes, create separate equipment units for each product stream (e.g., separate pumps for gas, oil, water products from a separator).
@@ -242,10 +262,16 @@ export async function POST(request: NextRequest) {
       * Product streams FROM the column (edges from column with sourceHandle like "overhead-top" or "bottoms-bottom" to destination equipment)
     - Never create a column without creating the corresponding edges that connect it to the process flow
     
-    Include relevant process parameters in node data.
+    Include relevant process parameters in node data that DWSIM supports:
+    - For columns: "stages" (number of stages), "reflux_ratio", "reboiler_duty" (kW)
+    - For pumps: "pressure_rise" (kPa), "efficiency" (0-1)
+    - For compressors: "pressure_ratio", "efficiency" (0-1)
+    - For heat exchangers: "duty" (kW), "approach_temp" (C)
+    - For reactors: "conversion" (0-1), "temperature" (C), "pressure" (kPa)
+    
     Create meaningful connections between equipment.
-    All edges should use type: "step" for horizontal/vertical lines like Aspen HYSYS.
-    Provide detailed Aspen HYSYS setup instructions.
+    All edges should use type: "step" for horizontal/vertical lines.
+    Provide detailed DWSIM setup instructions (not Aspen HYSYS).
 
     ✅ VALIDATION CHECKLIST (must pass before returning JSON):
     - Every edge has sourceHandle and targetHandle
@@ -263,6 +289,10 @@ export async function POST(request: NextRequest) {
     - Product equipment can have only incoming connections (VALID)
     - Process equipment should have both incoming and outgoing connections (VALID)
     - CRITICAL: Every node in the "nodes" array must appear in at least one edge in the "edges" array
+    - All unit operation types are DWSIM-supported (see list above)
+    - Property package is DWSIM-supported (Peng-Robinson, NRTL, UNIFAC, etc.)
+    - Feed streams have temperature, pressure, and composition specified in stream.data.properties
+    - No unsupported unit types (recipPump, controlValve, etc.) are used - use alternatives instead
 
     📋 EXAMPLE (three-phase separation with proper spacing):
     {
@@ -526,7 +556,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate required fields
-    if (!flowsheetData.nodes || !flowsheetData.edges || !flowsheetData.aspenInstructions) {
+    if (!flowsheetData.nodes || !flowsheetData.edges || !flowsheetData.dwsimInstructions) {
       return NextResponse.json(
         { error: 'Invalid flowsheet data structure' },
         { status: 500 }

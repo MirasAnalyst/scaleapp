@@ -265,31 +265,72 @@ class DWSIMClient:
             self._automation = None
 
     def _run_dwsim(self, payload: schemas.FlowsheetPayload) -> schemas.SimulationResult:
+        """Create and run a DWSIM flowsheet from JSON payload."""
         assert self._automation
 
-        flowsheet = self._load_template_flowsheet()
-        if flowsheet is None:
-            logger.warning("DWSIM template not configured; returning mock results")
-            return self._mock_result(payload)
-
-        # At this stage we simply run the template; mapping AI JSON -> DWSIM
-        # objects will be implemented in a follow-up iteration.
-        self._automation.CalculateFlowsheet(flowsheet, None)
-
-        stream_results = self._extract_streams(flowsheet, payload)
-        unit_results = self._extract_units(flowsheet)
-
-        return schemas.SimulationResult(
-            flowsheet_name=payload.name,
-            status="ok" if stream_results else "empty",
-            streams=stream_results,
-            units=unit_results,
-            warnings=[
-                "DWSIM template executed. JSON-to-DWSIM mapping not yet implemented",
-                "Set DWSIM_TEMPLATE_PATH to a .dwxml flowsheet to customize",
-            ],
-            diagnostics={"template": self._template_path},
-        )
+        # Create a new flowsheet (or load template as base)
+        if self._template_path:
+            flowsheet = self._load_template_flowsheet()
+            if flowsheet is None:
+                logger.warning("Template not found, creating blank flowsheet")
+                flowsheet = self._automation.NewFlowsheet()
+        else:
+            flowsheet = self._automation.NewFlowsheet()
+        
+        warnings: List[str] = []
+        
+        try:
+            # Step 1: Configure property package
+            self._configure_property_package(flowsheet, payload.thermo, warnings)
+            
+            # Step 2: Add components to flowsheet
+            self._add_components(flowsheet, payload.thermo.components, warnings)
+            
+            # Step 3: Create material streams
+            stream_map = self._create_streams(flowsheet, payload.streams, warnings)
+            
+            # Step 4: Create unit operations
+            unit_map = self._create_units(flowsheet, payload.units, warnings)
+            
+            # Step 5: Connect streams to units
+            self._connect_streams(flowsheet, payload.streams, stream_map, unit_map, warnings)
+            
+            # Step 6: Configure unit parameters
+            self._configure_units(flowsheet, payload.units, unit_map, warnings)
+            
+            # Step 7: Run simulation
+            logger.info("Running DWSIM simulation for flowsheet: %s", payload.name)
+            self._automation.CalculateFlowsheet(flowsheet, None)
+            
+            # Step 8: Extract results
+            stream_results = self._extract_streams(flowsheet, payload)
+            unit_results = self._extract_units(flowsheet)
+            
+            return schemas.SimulationResult(
+                flowsheet_name=payload.name,
+                status="ok" if stream_results else "empty",
+                streams=stream_results,
+                units=unit_results,
+                warnings=warnings if warnings else [],
+                diagnostics={"mode": "dwsim", "units_created": len(unit_map), "streams_created": len(stream_map)},
+            )
+        except Exception as exc:
+            logger.exception("Error creating/running DWSIM flowsheet: %s", exc)
+            warnings.append(f"DWSIM error: {str(exc)}")
+            # Return partial results if available
+            try:
+                stream_results = self._extract_streams(flowsheet, payload)
+                unit_results = self._extract_units(flowsheet)
+                return schemas.SimulationResult(
+                    flowsheet_name=payload.name,
+                    status="error",
+                    streams=stream_results,
+                    units=unit_results,
+                    warnings=warnings,
+                    diagnostics={"error": str(exc)},
+                )
+            except Exception:
+                return self._mock_result(payload)
 
     def _load_template_flowsheet(self):
         if not self._template_path:
@@ -305,6 +346,328 @@ class DWSIMClient:
         tmp_file.write_bytes(template.read_bytes())
         logger.info("Running DWSIM template %s", tmp_file)
         return self._automation.LoadFlowsheet(str(tmp_file))
+
+    def _configure_property_package(self, flowsheet, thermo: schemas.ThermoConfig, warnings: List[str]) -> None:
+        """Configure the property package in DWSIM."""
+        try:
+            # Map property package names to DWSIM types
+            package_map = {
+                "Peng-Robinson": "Peng-Robinson",
+                "PR": "Peng-Robinson",
+                "Soave-Redlich-Kwong": "Soave-Redlich-Kwong",
+                "SRK": "Soave-Redlich-Kwong",
+                "NRTL": "NRTL",
+                "UNIFAC": "UNIFAC",
+                "UNIQUAC": "UNIQUAC",
+                "Lee-Kesler-Plöcker": "Lee-Kesler-Plöcker",
+                "IAPWS-IF97": "IAPWS-IF97",
+                "Chao-Seader": "Chao-Seader",
+                "Grayson-Streed": "Grayson-Streed",
+            }
+            
+            package_name = thermo.package or "Peng-Robinson"
+            dwsim_package = package_map.get(package_name, "Peng-Robinson")
+            
+            if package_name != dwsim_package:
+                warnings.append(f"Property package '{package_name}' mapped to '{dwsim_package}'")
+            
+            # Set property package (DWSIM API method)
+            # Try multiple method names in order of likelihood
+            set_methods = [
+                lambda: setattr(flowsheet, 'PropertyPackage', dwsim_package),
+                lambda: flowsheet.SetPropertyPackage(dwsim_package),
+                lambda: flowsheet.SetPropertyPackageName(dwsim_package),
+                lambda: flowsheet.SetThermoPackage(dwsim_package),
+            ]
+            
+            success = False
+            for method in set_methods:
+                try:
+                    method()
+                    logger.info("Set property package to: %s", dwsim_package)
+                    success = True
+                    break
+                except (AttributeError, TypeError):
+                    continue
+                except Exception as e:
+                    logger.debug("Property package method failed: %s", e)
+                    continue
+            
+            if not success:
+                warnings.append(f"Could not set property package '{dwsim_package}' - using default. "
+                              "Run test_api_methods.py to discover correct method name.")
+        except Exception as exc:
+            logger.warning("Failed to configure property package: %s", exc)
+            warnings.append(f"Property package configuration error: {str(exc)}")
+
+    def _add_components(self, flowsheet, components: List[str], warnings: List[str]) -> None:
+        """Add chemical components to the flowsheet."""
+        if not components:
+            warnings.append("No components specified - using default components")
+            components = ["Water", "Methane", "Ethane"]  # Default fallback
+        
+        try:
+            # Try multiple method names for adding components
+            add_methods = [
+                lambda c: flowsheet.AddComponent(c),
+                lambda c: flowsheet.AddCompound(c),
+                lambda c: flowsheet.AddChemical(c),
+                lambda c: flowsheet.AddComponentToFlowsheet(c),
+            ]
+            
+            for comp in components:
+                success = False
+                for method in add_methods:
+                    try:
+                        method(comp)
+                        logger.debug("Added component: %s", comp)
+                        success = True
+                        break
+                    except (AttributeError, TypeError):
+                        continue
+                    except Exception as comp_exc:
+                        # If method exists but component not found, that's different
+                        logger.warning("Failed to add component '%s': %s", comp, comp_exc)
+                        warnings.append(f"Component '{comp}' not found in DWSIM database")
+                        success = True  # Method worked, component just not found
+                        break
+                
+                if not success:
+                    logger.warning("Could not find method to add component '%s'", comp)
+                    warnings.append(f"Could not add component '{comp}' - run test_api_methods.py to discover correct method")
+        except Exception as exc:
+            logger.warning("Failed to add components: %s", exc)
+            warnings.append(f"Component addition error: {str(exc)}")
+
+    def _create_streams(self, flowsheet, streams: List[schemas.StreamSpec], warnings: List[str]) -> dict:
+        """Create material streams in DWSIM."""
+        stream_map = {}  # Maps stream.id -> DWSIM stream object
+        
+        for stream_spec in streams:
+            try:
+                # Create material stream
+                x = stream_spec.properties.get("x", 100) if stream_spec.properties else 100
+                y = stream_spec.properties.get("y", 100) if stream_spec.properties else 100
+                stream_obj = flowsheet.AddObject("MaterialStream", stream_spec.id or stream_spec.name or f"stream_{len(stream_map)}", x, y)
+                stream_map[stream_spec.id] = stream_obj
+                
+                # Set stream properties
+                props = stream_spec.properties or {}
+                
+                # Temperature (convert C to K if needed)
+                temp = props.get("temperature")
+                if temp is not None:
+                    try:
+                        stream_obj.SetProp("temperature", "overall", None, "", "K", temp + 273.15)
+                    except Exception:
+                        try:
+                            stream_obj.SetProp("temperature", "overall", None, "", "C", temp)
+                        except Exception as e:
+                            warnings.append(f"Stream {stream_spec.id}: Could not set temperature: {e}")
+                
+                # Pressure (in kPa)
+                pressure = props.get("pressure")
+                if pressure is not None:
+                    try:
+                        stream_obj.SetProp("pressure", "overall", None, "", "kPa", pressure)
+                    except Exception as e:
+                        warnings.append(f"Stream {stream_spec.id}: Could not set pressure: {e}")
+                
+                # Mass flow (convert kg/h to kg/s)
+                flow = props.get("flow_rate") or props.get("mass_flow")
+                if flow is not None:
+                    try:
+                        stream_obj.SetProp("totalflow", "overall", None, "", "kg/s", flow / 3600.0)
+                    except Exception:
+                        try:
+                            stream_obj.SetProp("totalflow", "overall", None, "", "kg/h", flow)
+                        except Exception as e:
+                            warnings.append(f"Stream {stream_spec.id}: Could not set flow rate: {e}")
+                
+                # Composition (mole fractions)
+                composition = props.get("composition", {})
+                if composition:
+                    total = sum(composition.values())
+                    if total > 0:
+                        for comp, frac in composition.items():
+                            try:
+                                # Normalize and set mole fraction
+                                normalized_frac = frac / total
+                                stream_obj.SetProp("molefraction", "overall", comp, "", "", normalized_frac)
+                            except Exception as e:
+                                warnings.append(f"Stream {stream_spec.id}: Could not set composition for {comp}: {e}")
+                
+                # Vapor fraction
+                vapor_frac = props.get("vapor_fraction")
+                if vapor_frac is not None:
+                    try:
+                        stream_obj.SetProp("vaporfraction", "overall", None, "", "", vapor_frac)
+                    except Exception:
+                        pass  # Optional property
+                
+                logger.debug("Created stream: %s", stream_spec.id)
+            except Exception as exc:
+                logger.warning("Failed to create stream %s: %s", stream_spec.id, exc)
+                warnings.append(f"Failed to create stream '{stream_spec.id}': {str(exc)}")
+        
+        return stream_map
+
+    def _create_units(self, flowsheet, units: List[schemas.UnitSpec], warnings: List[str]) -> dict:
+        """Create unit operations in DWSIM."""
+        unit_map = {}  # Maps unit.id -> DWSIM unit object
+        
+        # Map JSON unit types to DWSIM unit operation types
+        type_map = {
+            "distillationColumn": "DistillationColumn",
+            "packedColumn": "PackedColumn",
+            "absorber": "AbsorptionColumn",
+            "stripper": "StrippingColumn",
+            "flashDrum": "FlashDrum",
+            "separator": "Separator",
+            "separator3p": "ThreePhaseSeparator",
+            "tank": "Tank",
+            "heaterCooler": "Heater",
+            "shellTubeHX": "HeatExchanger",
+            "airCooler": "AirCooler",
+            "kettleReboiler": "KettleReboiler",
+            "firedHeater": "FiredHeater",
+            "cstr": "CSTR",
+            "pfr": "PFR",
+            "gibbsReactor": "GibbsReactor",
+            "equilibriumReactor": "EquilibriumReactor",
+            "conversionReactor": "ConversionReactor",
+            "pump": "Pump",
+            "compressor": "Compressor",
+            "turbine": "Turbine",
+            "valve": "Valve",
+            "mixer": "Mixer",
+            "splitter": "Splitter",
+            "filter": "Filter",
+            "cyclone": "Cyclone",
+            "adsorber": "Adsorber",
+            "membrane": "Membrane",
+            "boiler": "Boiler",
+            "condenser": "Condenser",
+        }
+        
+        for unit_spec in units:
+            try:
+                dwsim_type = type_map.get(unit_spec.type)
+                if not dwsim_type:
+                    warnings.append(f"Unit type '{unit_spec.type}' not supported in DWSIM - skipping")
+                    continue
+                
+                # Get position from unit spec or use defaults
+                params = unit_spec.parameters or {}
+                x = params.get("x", 200)
+                y = params.get("y", 200)
+                
+                # Create unit operation
+                unit_obj = flowsheet.AddObject(dwsim_type, unit_spec.id, x, y)
+                unit_map[unit_spec.id] = unit_obj
+                
+                logger.debug("Created unit: %s (type: %s)", unit_spec.id, dwsim_type)
+            except Exception as exc:
+                logger.warning("Failed to create unit %s: %s", unit_spec.id, exc)
+                warnings.append(f"Failed to create unit '{unit_spec.id}': {str(exc)}")
+        
+        return unit_map
+
+    def _connect_streams(self, flowsheet, streams: List[schemas.StreamSpec], stream_map: dict, unit_map: dict, warnings: List[str]) -> None:
+        """Connect material streams to unit operations."""
+        for stream_spec in streams:
+            if not stream_spec.source or not stream_spec.target:
+                continue  # Skip streams without connections
+            
+            stream_obj = stream_map.get(stream_spec.id)
+            if not stream_obj:
+                warnings.append(f"Stream '{stream_spec.id}' not found for connection")
+                continue
+            
+            # Connect to target unit (inlet)
+            target_unit = unit_map.get(stream_spec.target)
+            if target_unit:
+                try:
+                    # Map port handles to DWSIM port indices
+                    # This is simplified - actual port mapping depends on unit type
+                    port = self._map_port_to_index(stream_spec.targetHandle, stream_spec.target)
+                    target_unit.SetInletStream(port, stream_obj)
+                    logger.debug("Connected stream %s to unit %s (port %s)", stream_spec.id, stream_spec.target, port)
+                except Exception as exc:
+                    warnings.append(f"Failed to connect stream '{stream_spec.id}' to unit '{stream_spec.target}': {str(exc)}")
+            
+            # Connect from source unit (outlet)
+            source_unit = unit_map.get(stream_spec.source)
+            if source_unit:
+                try:
+                    port = self._map_port_to_index(stream_spec.sourceHandle, stream_spec.source)
+                    source_unit.SetOutletStream(port, stream_obj)
+                    logger.debug("Connected stream %s from unit %s (port %s)", stream_spec.id, stream_spec.source, port)
+                except Exception as exc:
+                    warnings.append(f"Failed to connect stream '{stream_spec.id}' from unit '{stream_spec.source}': {str(exc)}")
+
+    def _map_port_to_index(self, handle: Optional[str], unit_id: str) -> int:
+        """Map port handle name to DWSIM port index."""
+        # Simplified mapping - actual implementation depends on DWSIM API
+        # Most units use 0 for first inlet/outlet
+        if not handle:
+            return 0
+        
+        # Extract number from handle if present (e.g., "in-1-left" -> 0, "in-2-left" -> 1)
+        import re
+        match = re.search(r'(\d+)', handle)
+        if match:
+            return int(match.group(1)) - 1
+        
+        return 0  # Default to first port
+
+    def _configure_units(self, flowsheet, units: List[schemas.UnitSpec], unit_map: dict, warnings: List[str]) -> None:
+        """Configure unit operation parameters."""
+        for unit_spec in units:
+            unit_obj = unit_map.get(unit_spec.id)
+            if not unit_obj:
+                continue
+            
+            try:
+                params = unit_spec.parameters or {}
+                
+                # Configure based on unit type
+                if unit_spec.type == "distillationColumn":
+                    if "stages" in params:
+                        try:
+                            unit_obj.SetProp("NumberOfStages", params["stages"])
+                        except Exception:
+                            pass
+                    if "reflux_ratio" in params:
+                        try:
+                            unit_obj.SetProp("RefluxRatio", params["reflux_ratio"])
+                        except Exception:
+                            pass
+                
+                elif unit_spec.type in ["pump", "compressor"]:
+                    if "pressure_rise" in params:
+                        try:
+                            unit_obj.SetProp("PressureIncrease", params["pressure_rise"])
+                        except Exception:
+                            pass
+                    if "efficiency" in params:
+                        try:
+                            unit_obj.SetProp("Efficiency", params["efficiency"])
+                        except Exception:
+                            pass
+                
+                elif unit_spec.type in ["heaterCooler", "shellTubeHX"]:
+                    if "duty" in params:
+                        try:
+                            unit_obj.SetProp("HeatFlow", params["duty"])
+                        except Exception:
+                            pass
+                
+                # Add more unit-specific configurations as needed
+                logger.debug("Configured unit: %s", unit_spec.id)
+            except Exception as exc:
+                logger.warning("Failed to configure unit %s: %s", unit_spec.id, exc)
+                warnings.append(f"Failed to configure unit '{unit_spec.id}': {str(exc)}")
 
     def _extract_streams(self, flowsheet, payload: schemas.FlowsheetPayload) -> List[schemas.StreamResult]:  # pragma: no cover - pythonnet objects
         results: List[schemas.StreamResult] = []

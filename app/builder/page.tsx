@@ -32,7 +32,7 @@ export default function BuilderPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [aspenInstructions, setAspenInstructions] = useState('');
+  const [dwsimInstructions, setDwsimInstructions] = useState('');
   const [description, setDescription] = useState('');
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -125,7 +125,7 @@ export default function BuilderPage() {
       // Update the flow with new data
       setGeneratedNodes(data.nodes);
       setGeneratedEdges(data.edges);
-      setAspenInstructions(data.aspenInstructions);
+      setDwsimInstructions(data.dwsimInstructions);
       setDescription(data.description);
       runSimulation(data).catch(() => {});
 
@@ -150,7 +150,7 @@ export default function BuilderPage() {
   const loadFromHistory = (item: HistoryItem) => {
     setGeneratedNodes(item.data.nodes);
     setGeneratedEdges(item.data.edges);
-    setAspenInstructions(item.data.aspenInstructions);
+    setDwsimInstructions(item.data.dwsimInstructions);
     setDescription(item.data.description);
     setPrompt(item.prompt);
     setShowHistory(false);
@@ -161,7 +161,7 @@ export default function BuilderPage() {
   const clearFlowsheet = () => {
     setGeneratedNodes([]);
     setGeneratedEdges([]);
-    setAspenInstructions('');
+    setDwsimInstructions('');
     setDescription('');
     setPrompt('');
     setError(null);
@@ -174,7 +174,7 @@ export default function BuilderPage() {
     const data = {
       nodes: generatedNodes,
       edges: generatedEdges,
-      aspenInstructions,
+      dwsimInstructions,
       description,
       prompt,
       timestamp: new Date().toISOString(),
@@ -191,12 +191,12 @@ export default function BuilderPage() {
     URL.revokeObjectURL(url);
   };
 
-  const downloadAspenInstructions = () => {
-    const blob = new Blob([aspenInstructions], { type: 'text/plain' });
+  const downloadDwsimInstructions = () => {
+    const blob = new Blob([dwsimInstructions], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `aspen-instructions-${Date.now()}.txt`;
+    a.download = `dwsim-instructions-${Date.now()}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -302,15 +302,15 @@ export default function BuilderPage() {
             </div>
           )}
 
-          {/* Aspen Instructions */}
-          {aspenInstructions && (
+          {/* DWSIM Instructions */}
+          {dwsimInstructions && (
             <div className="flex-1 p-4 overflow-y-auto">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Aspen HYSYS Instructions
+                  DWSIM Instructions
                 </h3>
                 <button
-                  onClick={downloadAspenInstructions}
+                  onClick={downloadDwsimInstructions}
                   className="flex items-center space-x-1 px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
                 >
                   <Download className="w-3 h-3" />
@@ -319,7 +319,7 @@ export default function BuilderPage() {
               </div>
               <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-3">
                 <pre className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap font-mono">
-                  {aspenInstructions}
+                  {dwsimInstructions}
                 </pre>
               </div>
             </div>
