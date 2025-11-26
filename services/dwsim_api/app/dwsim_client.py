@@ -269,13 +269,20 @@ class DWSIMClient:
         assert self._automation
 
         # Create a new flowsheet (or load template as base)
+        # Try CreateFlowsheet() first (confirmed working in tests), fallback to NewFlowsheet()
         if self._template_path:
             flowsheet = self._load_template_flowsheet()
             if flowsheet is None:
                 logger.warning("Template not found, creating blank flowsheet")
-                flowsheet = self._automation.NewFlowsheet()
+                try:
+                    flowsheet = self._automation.CreateFlowsheet()
+                except (AttributeError, TypeError):
+                    flowsheet = self._automation.NewFlowsheet()
         else:
-            flowsheet = self._automation.NewFlowsheet()
+            try:
+                flowsheet = self._automation.CreateFlowsheet()
+            except (AttributeError, TypeError):
+                flowsheet = self._automation.NewFlowsheet()
         
         warnings: List[str] = []
         
@@ -444,11 +451,36 @@ class DWSIMClient:
         stream_map = {}  # Maps stream.id -> DWSIM stream object
         
         for stream_spec in streams:
+            stream_obj = None
+            stream_name = stream_spec.id or stream_spec.name or f"stream_{len(stream_map)}"
+            x = stream_spec.properties.get("x", 100) if stream_spec.properties else 100
+            y = stream_spec.properties.get("y", 100) if stream_spec.properties else 100
+            
+            # Try multiple method signatures for AddObject (DWSIM API may require different signatures)
+            create_methods = [
+                lambda: flowsheet.AddObject("MaterialStream", stream_name, x, y),
+                lambda: flowsheet.AddObject("MaterialStream", stream_name, float(x), float(y)),
+                lambda: flowsheet.AddObject("MaterialStream", stream_name),
+            ]
+            
+            for method in create_methods:
+                try:
+                    stream_obj = method()
+                    logger.debug("Created stream '%s' using AddObject", stream_name)
+                    break
+                except (TypeError, AttributeError) as e:
+                    logger.debug("AddObject signature failed: %s", e)
+                    continue
+                except Exception as e:
+                    logger.debug("AddObject failed with error: %s", e)
+                    continue
+            
+            if stream_obj is None:
+                logger.warning("Failed to create stream '%s' - AddObject() failed with all signatures", stream_name)
+                warnings.append(f"Failed to create stream '{stream_name}' - DWSIM API method signature issue. Run test_api_discovery.py to find correct signature.")
+                continue
+            
             try:
-                # Create material stream
-                x = stream_spec.properties.get("x", 100) if stream_spec.properties else 100
-                y = stream_spec.properties.get("y", 100) if stream_spec.properties else 100
-                stream_obj = flowsheet.AddObject("MaterialStream", stream_spec.id or stream_spec.name or f"stream_{len(stream_map)}", x, y)
                 stream_map[stream_spec.id] = stream_obj
                 
                 # Set stream properties
@@ -507,8 +539,8 @@ class DWSIMClient:
                 
                 logger.debug("Created stream: %s", stream_spec.id)
             except Exception as exc:
-                logger.warning("Failed to create stream %s: %s", stream_spec.id, exc)
-                warnings.append(f"Failed to create stream '{stream_spec.id}': {str(exc)}")
+                logger.warning("Failed to set properties for stream %s: %s", stream_spec.id, exc)
+                warnings.append(f"Failed to set properties for stream '{stream_spec.id}': {str(exc)}")
         
         return stream_map
 
@@ -551,25 +583,47 @@ class DWSIMClient:
         }
         
         for unit_spec in units:
-            try:
-                dwsim_type = type_map.get(unit_spec.type)
-                if not dwsim_type:
-                    warnings.append(f"Unit type '{unit_spec.type}' not supported in DWSIM - skipping")
+            unit_obj = None
+            dwsim_type = type_map.get(unit_spec.type)
+            if not dwsim_type:
+                warnings.append(f"Unit type '{unit_spec.type}' not supported in DWSIM - skipping")
+                continue
+            
+            # Get position from unit spec or use defaults
+            params = unit_spec.parameters or {}
+            x = params.get("x", 200)
+            y = params.get("y", 200)
+            
+            # Try multiple method signatures for AddObject (DWSIM API may require different signatures)
+            create_methods = [
+                lambda: flowsheet.AddObject(dwsim_type, unit_spec.id, x, y),
+                lambda: flowsheet.AddObject(dwsim_type, unit_spec.id, float(x), float(y)),
+                lambda: flowsheet.AddObject(dwsim_type, unit_spec.id),
+            ]
+            
+            for method in create_methods:
+                try:
+                    unit_obj = method()
+                    logger.debug("Created unit '%s' (type: %s) using AddObject", unit_spec.id, dwsim_type)
+                    break
+                except (TypeError, AttributeError) as e:
+                    logger.debug("AddObject signature failed for unit '%s': %s", unit_spec.id, e)
                     continue
-                
-                # Get position from unit spec or use defaults
-                params = unit_spec.parameters or {}
-                x = params.get("x", 200)
-                y = params.get("y", 200)
-                
-                # Create unit operation
-                unit_obj = flowsheet.AddObject(dwsim_type, unit_spec.id, x, y)
+                except Exception as e:
+                    logger.debug("AddObject failed for unit '%s' with error: %s", unit_spec.id, e)
+                    continue
+            
+            if unit_obj is None:
+                logger.warning("Failed to create unit '%s' (type: %s) - AddObject() failed with all signatures", unit_spec.id, dwsim_type)
+                warnings.append(f"Failed to create unit '{unit_spec.id}' (type: {unit_spec.type}) - DWSIM API method signature issue. Run test_api_discovery.py to find correct signature.")
+                continue
+            
+            try:
                 unit_map[unit_spec.id] = unit_obj
-                
                 logger.debug("Created unit: %s (type: %s)", unit_spec.id, dwsim_type)
             except Exception as exc:
-                logger.warning("Failed to create unit %s: %s", unit_spec.id, exc)
-                warnings.append(f"Failed to create unit '{unit_spec.id}': {str(exc)}")
+                logger.warning("Failed to store unit %s: %s", unit_spec.id, exc)
+                warnings.append(f"Failed to store unit '{unit_spec.id}': {str(exc)}")
         
         return unit_map
 

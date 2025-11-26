@@ -36,8 +36,19 @@ Test-Path $env:DWSIM_LIB_PATH
 
 ### Step 4: Run API Discovery Test
 
+**Option A: Run the enhanced discovery test (recommended):**
+```powershell
+python test_api_discovery.py
+```
+
+**Option B: Run the original API methods test:**
 ```powershell
 python test_api_methods.py
+```
+
+**Option C: Run all tests with the PowerShell script:**
+```powershell
+.\run_tests_windows.ps1
 ```
 
 **Expected Output:**
@@ -45,6 +56,7 @@ python test_api_methods.py
 - ✗ marks for methods that don't work
 - Alternative method names if found
 - List of available methods on objects
+- Tested method signatures for `AddObject()`
 
 **Copy the output** - you'll need it to update the code!
 

@@ -68,7 +68,10 @@ export async function POST(request: NextRequest) {
     IMPORTANT: Generate flowsheets compatible with DWSIM's capabilities. The flowsheet will be executed in DWSIM, not Aspen HYSYS.
     Use DWSIM-supported unit operations, property packages, and parameter formats.
 
-    Return ONLY valid JSON in this exact format:
+    CRITICAL: Return ONLY valid JSON. Do NOT include markdown code blocks, explanations, or any other text.
+    Return ONLY the JSON object starting with { and ending with }.
+    
+    Required JSON format:
     {
       "nodes": [
         {
@@ -179,10 +182,14 @@ export async function POST(request: NextRequest) {
     - LOGICAL POSITIONING: Flow is LEFT to RIGHT (suction → discharge)
     
     **Heat Exchangers (horizontal flow):**
-    - shellTubeHX, plateHX, doublePipeHX, heaterCooler, condenser
+    - shellTubeHX, plateHX, doublePipeHX, heaterCooler, condenser, airCooler
     - Hot side: hot-in-left (left), hot-out-right (right)
     - Cold side: cold-in-bottom (bottom), cold-out-top (top)
     - LOGICAL POSITIONING: Hot streams flow horizontally, cold streams flow vertically
+    - CRITICAL: Every heat exchanger MUST have at least ONE side connected (hot OR cold)
+    - For coolers/condensers: Connect the hot process stream (hot-in-left → hot-out-right)
+    - For heaters: Connect the cold process stream (cold-in-bottom → cold-out-top)
+    - If both sides are used, connect BOTH hot and cold streams with separate edges
     
     **Valves (horizontal flow):**
     - valve, controlValve, checkValve, throttleValve
@@ -251,6 +258,13 @@ export async function POST(request: NextRequest) {
     - VALID PATTERNS: Feed equipment (only outgoing), Product equipment (only incoming), Process equipment (both incoming and outgoing)
     - INVALID PATTERN: Equipment with no connections at all
     - Either connect all equipment to the process flow or don't create it
+    
+    🔥 HEAT EXCHANGER CONNECTIVITY (CRITICAL):
+    - Every heat exchanger (shellTubeHX, heaterCooler, condenser, airCooler) MUST be connected
+    - For coolers/condensers: Connect the hot process stream through the exchanger
+    - Create TWO edges for a cooler: one TO the cooler (hot-in-left) and one FROM the cooler (hot-out-right)
+    - Example: If you create "hx-cooler-1", create edges connecting it to upstream and downstream equipment
+    - NEVER create a heat exchanger without creating edges that connect it to the process flow
     
     🏭 COLUMN CONNECTIVITY (CRITICAL):
     - ALL columns (distillation, vacuum, packed, absorber, stripper) MUST have connections
@@ -456,6 +470,7 @@ export async function POST(request: NextRequest) {
       ],
       temperature: 0.3,
       max_tokens: 10000,
+      response_format: { type: "json_object" }, // Force JSON mode (requires model support)
     });
 
     const responseText = completion.choices[0]?.message?.content;
@@ -464,16 +479,79 @@ export async function POST(request: NextRequest) {
       throw new Error('No response from OpenAI');
     }
 
+    // Extract JSON from response (handle markdown code blocks and extra text)
+    let jsonText = responseText.trim();
+    
+    // Remove markdown code blocks if present
+    if (jsonText.startsWith('```')) {
+      // Remove opening ```json or ```
+      jsonText = jsonText.replace(/^```(?:json)?\s*/i, '');
+      // Remove closing ```
+      jsonText = jsonText.replace(/\s*```$/i, '');
+      jsonText = jsonText.trim();
+    }
+    
+    // Try to extract JSON object if there's extra text
+    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      jsonText = jsonMatch[0];
+    }
+
     // Parse and validate JSON response
     let flowsheetData: FlowSheetData;
     try {
-      flowsheetData = JSON.parse(responseText);
+      flowsheetData = JSON.parse(jsonText);
     } catch (parseError) {
-      console.error('Failed to parse OpenAI response:', responseText);
-      return NextResponse.json(
-        { error: 'Invalid JSON response from AI' },
-        { status: 500 }
-      );
+      console.error('Failed to parse OpenAI response:', {
+        originalLength: responseText.length,
+        extractedLength: jsonText.length,
+        firstChars: jsonText.substring(0, 200),
+        lastChars: jsonText.substring(Math.max(0, jsonText.length - 200)),
+        parseError: parseError instanceof Error ? parseError.message : String(parseError)
+      });
+      
+      // If this is a retry, don't retry again
+      if (retryCount > 0) {
+        return NextResponse.json(
+          { 
+            error: 'Invalid JSON response from AI after retry',
+            details: 'The AI returned malformed JSON. Please try again with a simpler prompt.'
+          },
+          { status: 500 }
+        );
+      }
+      
+      // First attempt failed, retry with explicit JSON format instruction
+      const jsonRetryPrompt = `${prompt}
+
+🚨 CRITICAL: JSON FORMAT ERROR
+The previous response was not valid JSON. You MUST return ONLY valid JSON, nothing else.
+
+REQUIREMENTS:
+- Return ONLY the JSON object, no markdown code blocks, no explanations
+- Do NOT wrap the JSON in \`\`\`json code blocks
+- Do NOT add any text before or after the JSON
+- The response must start with { and end with }
+- Ensure all strings are properly quoted
+- Ensure all brackets and braces are properly closed
+- Ensure no trailing commas
+
+Return ONLY this JSON structure:
+{
+  "nodes": [...],
+  "edges": [...],
+  "dwsimInstructions": "...",
+  "description": "..."
+}`;
+
+      // Recursive call with retry count
+      const retryRequest = new NextRequest(request.url, {
+        method: 'POST',
+        headers: request.headers,
+        body: JSON.stringify({ prompt: jsonRetryPrompt, retryCount: 1 })
+      });
+      
+      return POST(retryRequest);
     }
 
     // Node type mapping for fallback compatibility
@@ -618,13 +696,37 @@ export async function POST(request: NextRequest) {
         return `- ${n.id} (${nodeType}, "${nodeLabel}")`;
       }).join('\n');
       
+      // Check if any isolated equipment are heat exchangers
+      const isolatedHeatExchangers = trulyIsolatedNodes.filter(n => 
+        ['shellTubeHX', 'heaterCooler', 'condenser', 'airCooler', 'kettleReboiler'].includes(n.type)
+      );
+      
+      let heatExchangerGuidance = '';
+      if (isolatedHeatExchangers.length > 0) {
+        const hxList = isolatedHeatExchangers.map(n => n.id).join(', ');
+        const exampleHx = isolatedHeatExchangers[0].id;
+        heatExchangerGuidance = `
+🔥 CRITICAL: HEAT EXCHANGER CONNECTIVITY ISSUE
+The following heat exchangers are isolated: ${hxList}
+
+For EACH heat exchanger, you MUST create edges connecting it:
+- For coolers/condensers: Connect hot process stream
+  * Edge TO exchanger: {"source": "upstream-equipment-id", "sourceHandle": "outlet-handle", "target": "${exampleHx}", "targetHandle": "hot-in-left", "type": "step"}
+  * Edge FROM exchanger: {"source": "${exampleHx}", "sourceHandle": "hot-out-right", "target": "downstream-equipment-id", "targetHandle": "inlet-handle", "type": "step"}
+- For heaters: Connect cold process stream
+  * Edge TO exchanger: {"source": "upstream-equipment-id", "sourceHandle": "outlet-handle", "target": "${exampleHx}", "targetHandle": "cold-in-bottom", "type": "step"}
+  * Edge FROM exchanger: {"source": "${exampleHx}", "sourceHandle": "cold-out-top", "target": "downstream-equipment-id", "targetHandle": "inlet-handle", "type": "step"}
+
+If you cannot logically connect a heat exchanger, REMOVE it from the nodes array entirely.`;
+      }
+      
       // First attempt failed, retry with enhanced prompt
       const enhancedPrompt = `${prompt}
 
 🚨 CRITICAL ERROR: The previous attempt created isolated equipment that is not connected to the main process flow. You MUST follow these rules EXACTLY:
 
 ISOLATED EQUIPMENT DETECTED (these have NO connections at all):
-${isolatedEquipmentDetails}
+${isolatedEquipmentDetails}${heatExchangerGuidance}
 
 🚨 ABSOLUTE RULE: ALL EQUIPMENT MUST BE CONNECTED
 - Every piece of equipment MUST be connected to at least one other piece of equipment via edges
@@ -636,7 +738,11 @@ ${isolatedEquipmentDetails}
 - Every separator must have feed inlet and product outlets connected via edges
 - Every pump must have suction inlet and discharge outlet connected via edges
 - Every compressor must have suction inlet and discharge outlet connected via edges
-- Every heat exchanger must have both hot and cold side connections via edges
+- Every heat exchanger (shellTubeHX, heaterCooler, condenser, airCooler) MUST have at least ONE side connected:
+  * For coolers/condensers: Connect hot process stream (hot-in-left → hot-out-right)
+  * For heaters: Connect cold process stream (cold-in-bottom → cold-out-top)
+  * Example cooler edge: {"source": "upstream-equipment", "sourceHandle": "outlet", "target": "hx-cooler-1", "targetHandle": "hot-in-left"}
+  * Example cooler edge: {"source": "hx-cooler-1", "sourceHandle": "hot-out-right", "target": "downstream-equipment", "targetHandle": "inlet"}
 - Every column (including vacuum columns) MUST have:
   * At least one feed inlet edge (from another equipment TO the column)
   * At least one product outlet edge (from the column TO another equipment)
@@ -659,9 +765,28 @@ ${isolatedEquipmentDetails}
 
 📋 EXAMPLE OF CORRECT CONNECTIVITY:
 - separator3p: feed → separator → gas/oil/water → pumps/compressors (with edges connecting each step)
-- heat exchanger: hot stream → exchanger → cooled stream (with edges)
+- heat exchanger/cooler: upstream → hx-cooler-1 (hot-in-left) → hx-cooler-1 (hot-out-right) → downstream (with edges for both connections)
 - column: feed → column → overhead/bottoms → next equipment (with edges for feed, overhead, and bottoms)
 - vacuum column: feed → col-vacuum-1 → overhead/bottoms → next equipment (with edges connecting all)
+
+📋 SPECIFIC EXAMPLE FOR HEAT EXCHANGER (hx-cooler-1):
+If you create "hx-cooler-1", you MUST create edges like:
+{
+  "id": "stream-to-cooler",
+  "source": "upstream-equipment-id",
+  "sourceHandle": "outlet-handle",
+  "target": "hx-cooler-1",
+  "targetHandle": "hot-in-left",
+  "type": "step"
+},
+{
+  "id": "stream-from-cooler",
+  "source": "hx-cooler-1",
+  "sourceHandle": "hot-out-right",
+  "target": "downstream-equipment-id",
+  "targetHandle": "inlet-handle",
+  "type": "step"
+}
 
 🚨 FINAL WARNING: If you create any equipment with NO connections at all, the generation will fail. Every piece of equipment must be part of the continuous process flow. You MUST create edges in the "edges" array for every piece of equipment you create.`;
 
