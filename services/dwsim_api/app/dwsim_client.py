@@ -570,7 +570,9 @@ class DWSIMClient:
                         ("AddSimulationObject(enum)", lambda sn=stream_name: flowsheet.AddSimulationObject(stream_enum, sn)),
                     ])
             
-            for type_name in ["MaterialStream", "Material Stream"]:
+            # Prioritize the working signature observed on Windows: AddFlowsheetObject("Material Stream", name)
+            method_attempts.insert(0, ("AddFlowsheetObject('Material Stream')", lambda sn=stream_name: flowsheet.AddFlowsheetObject("Material Stream", sn) if hasattr(flowsheet, 'AddFlowsheetObject') else None))
+            for type_name in ["Material Stream", "MaterialStream"]:
                 if hasattr(flowsheet, 'AddFlowsheetObject'):
                     method_attempts.extend([
                         (f"AddFlowsheetObject('{type_name}', coords)", lambda tn=type_name, sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddFlowsheetObject(tn, sn, x_coord, y_coord)),
@@ -627,32 +629,41 @@ class DWSIMClient:
                 # Temperature (convert C to K if needed)
                 temp = props.get("temperature")
                 if temp is not None:
-                    try:
-                        stream_obj.SetProp("temperature", "overall", None, "", "K", temp + 273.15)
-                    except Exception:
+                    if hasattr(stream_obj, "SetProp"):
                         try:
-                            stream_obj.SetProp("temperature", "overall", None, "", "C", temp)
-                        except Exception as e:
-                            warnings.append(f"Stream {stream_spec.id}: Could not set temperature: {e}")
+                            stream_obj.SetProp("temperature", "overall", None, "", "K", temp + 273.15)
+                        except Exception:
+                            try:
+                                stream_obj.SetProp("temperature", "overall", None, "", "C", temp)
+                            except Exception as e:
+                                warnings.append(f"Stream {stream_spec.id}: Could not set temperature: {e}")
+                    else:
+                        warnings.append(f"Stream {stream_spec.id}: SetProp not available on stream object; using defaults")
                 
                 # Pressure (in kPa)
                 pressure = props.get("pressure")
                 if pressure is not None:
-                    try:
-                        stream_obj.SetProp("pressure", "overall", None, "", "kPa", pressure)
-                    except Exception as e:
-                        warnings.append(f"Stream {stream_spec.id}: Could not set pressure: {e}")
+                    if hasattr(stream_obj, "SetProp"):
+                        try:
+                            stream_obj.SetProp("pressure", "overall", None, "", "kPa", pressure)
+                        except Exception as e:
+                            warnings.append(f"Stream {stream_spec.id}: Could not set pressure: {e}")
+                    else:
+                        warnings.append(f"Stream {stream_spec.id}: SetProp not available on stream object; using defaults")
                 
                 # Mass flow (convert kg/h to kg/s)
                 flow = props.get("flow_rate") or props.get("mass_flow")
                 if flow is not None:
-                    try:
-                        stream_obj.SetProp("totalflow", "overall", None, "", "kg/s", flow / 3600.0)
-                    except Exception:
+                    if hasattr(stream_obj, "SetProp"):
                         try:
-                            stream_obj.SetProp("totalflow", "overall", None, "", "kg/h", flow)
-                        except Exception as e:
-                            warnings.append(f"Stream {stream_spec.id}: Could not set flow rate: {e}")
+                            stream_obj.SetProp("totalflow", "overall", None, "", "kg/s", flow / 3600.0)
+                        except Exception:
+                            try:
+                                stream_obj.SetProp("totalflow", "overall", None, "", "kg/h", flow)
+                            except Exception as e:
+                                warnings.append(f"Stream {stream_spec.id}: Could not set flow rate: {e}")
+                    else:
+                        warnings.append(f"Stream {stream_spec.id}: SetProp not available on stream object; using defaults")
                 
                 # Composition (mole fractions)
                 composition = props.get("composition", {})
@@ -660,20 +671,24 @@ class DWSIMClient:
                     total = sum(composition.values())
                     if total > 0:
                         for comp, frac in composition.items():
-                            try:
-                                # Normalize and set mole fraction
-                                normalized_frac = frac / total
-                                stream_obj.SetProp("molefraction", "overall", comp, "", "", normalized_frac)
-                            except Exception as e:
-                                warnings.append(f"Stream {stream_spec.id}: Could not set composition for {comp}: {e}")
+                            if hasattr(stream_obj, "SetProp"):
+                                try:
+                                    # Normalize and set mole fraction
+                                    normalized_frac = frac / total
+                                    stream_obj.SetProp("molefraction", "overall", comp, "", "", normalized_frac)
+                                except Exception as e:
+                                    warnings.append(f"Stream {stream_spec.id}: Could not set composition for {comp}: {e}")
+                            else:
+                                warnings.append(f"Stream {stream_spec.id}: SetProp not available; skipping composition for {comp}")
                 
                 # Vapor fraction
                 vapor_frac = props.get("vapor_fraction")
                 if vapor_frac is not None:
-                    try:
-                        stream_obj.SetProp("vaporfraction", "overall", None, "", "", vapor_frac)
-                    except Exception:
-                        pass  # Optional property
+                    if hasattr(stream_obj, "SetProp"):
+                        try:
+                            stream_obj.SetProp("vaporfraction", "overall", None, "", "", vapor_frac)
+                        except Exception:
+                            pass  # Optional property
                 
                 logger.debug("Created stream: %s", stream_spec.id)
             except Exception as exc:
@@ -736,6 +751,8 @@ class DWSIMClient:
             
             # Try multiple method signatures and approaches
             method_attempts = []
+            # Prioritize the working signature observed on Windows: AddFlowsheetObject("Pump", name)
+            method_attempts.append(("AddFlowsheetObject(str)", lambda ut=dwsim_type, uid=unit_spec.id: flowsheet.AddFlowsheetObject(ut, uid) if hasattr(flowsheet, 'AddFlowsheetObject') else None))
             if unit_enum is not None:
                 method_attempts.extend([
                     ("AddObject(enum, coords)", lambda ut=unit_enum, uid=unit_spec.id, x_coord=x, y_coord=y: flowsheet.AddObject(ut, uid, float(x_coord), float(y_coord))),
