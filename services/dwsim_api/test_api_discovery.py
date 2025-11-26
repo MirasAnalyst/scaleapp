@@ -205,21 +205,39 @@ def test_dwsim_api():
         
         # Test 9: Get streams and units
         logger.info("\n=== Testing Get Methods ===")
+        streams = None
         try:
             streams = flowsheet.GetMaterialStreams()
-            logger.info(f"✓ GetMaterialStreams() works, returned {len(streams)} streams")
+            logger.info(f"✓ GetMaterialStreams() works, returned {len(streams) if hasattr(streams, '__len__') else 'N/A'} streams")
         except Exception as e:
             logger.warning(f"✗ GetMaterialStreams() failed: {e}")
             if hasattr(flowsheet, 'MaterialStreams'):
-                logger.info("  Found property: MaterialStreams")
+                try:
+                    streams = flowsheet.MaterialStreams
+                    logger.info(f"✓ MaterialStreams property works, type: {type(streams)}")
+                    if hasattr(streams, '__len__'):
+                        logger.info(f"  Collection has {len(streams)} items")
+                    elif hasattr(streams, 'Count'):
+                        logger.info(f"  Collection has {streams.Count} items")
+                except Exception as prop_e:
+                    logger.warning(f"  MaterialStreams property access failed: {prop_e}")
         
+        units = None
         try:
             units = flowsheet.GetUnitOperations()
-            logger.info(f"✓ GetUnitOperations() works, returned {len(units)} units")
+            logger.info(f"✓ GetUnitOperations() works, returned {len(units) if hasattr(units, '__len__') else 'N/A'} units")
         except Exception as e:
             logger.warning(f"✗ GetUnitOperations() failed: {e}")
             if hasattr(flowsheet, 'UnitOperations'):
-                logger.info("  Found property: UnitOperations")
+                try:
+                    units = flowsheet.UnitOperations
+                    logger.info(f"✓ UnitOperations property works, type: {type(units)}")
+                    if hasattr(units, '__len__'):
+                        logger.info(f"  Collection has {len(units)} items")
+                    elif hasattr(units, 'Count'):
+                        logger.info(f"  Collection has {units.Count} items")
+                except Exception as prop_e:
+                    logger.warning(f"  UnitOperations property access failed: {prop_e}")
         
         # Test 10: Calculate flowsheet
         logger.info("\n=== Testing CalculateFlowsheet ===")

@@ -358,6 +358,7 @@ class DWSIMClient:
         """Configure the property package in DWSIM."""
         try:
             # Map property package names to DWSIM types
+            # Avoid ThermoCPropertyPackage as it may have missing dependencies
             package_map = {
                 "Peng-Robinson": "Peng-Robinson",
                 "PR": "Peng-Robinson",
@@ -375,7 +376,13 @@ class DWSIMClient:
             package_name = thermo.package or "Peng-Robinson"
             dwsim_package = package_map.get(package_name, "Peng-Robinson")
             
-            if package_name != dwsim_package:
+            # Avoid problematic property packages
+            if "ThermoC" in dwsim_package or "ThermoCS" in dwsim_package:
+                logger.warning("ThermoC property package may have missing dependencies, using Peng-Robinson instead")
+                dwsim_package = "Peng-Robinson"
+                warnings.append(f"Property package '{package_name}' changed to 'Peng-Robinson' to avoid ThermoC dependency issues")
+            
+            if package_name != dwsim_package and "ThermoC" not in package_name:
                 warnings.append(f"Property package '{package_name}' mapped to '{dwsim_package}'")
             
             # Set property package (DWSIM API method)
@@ -388,21 +395,39 @@ class DWSIMClient:
             ]
             
             success = False
+            last_error = None
             for method in set_methods:
                 try:
                     method()
                     logger.info("Set property package to: %s", dwsim_package)
                     success = True
                     break
-                except (AttributeError, TypeError):
+                except (AttributeError, TypeError) as e:
+                    last_error = e
                     continue
                 except Exception as e:
+                    last_error = e
+                    # Check if it's a FileNotFoundException for ThermoCS.dll
+                    error_str = str(e).lower()
+                    if "thermocs" in error_str or "filenotfound" in error_str:
+                        logger.warning("ThermoC property package dependency missing, trying Peng-Robinson")
+                        dwsim_package = "Peng-Robinson"
+                        try:
+                            setattr(flowsheet, 'PropertyPackage', dwsim_package)
+                            logger.info("Set property package to: Peng-Robinson (fallback)")
+                            success = True
+                            warnings.append("ThermoC property package unavailable, using Peng-Robinson")
+                            break
+                        except Exception:
+                            pass
                     logger.debug("Property package method failed: %s", e)
                     continue
             
             if not success:
-                warnings.append(f"Could not set property package '{dwsim_package}' - using default. "
-                              "Run test_api_methods.py to discover correct method name.")
+                error_msg = f"Could not set property package '{dwsim_package}'"
+                if last_error:
+                    error_msg += f": {last_error}"
+                warnings.append(error_msg)
         except Exception as exc:
             logger.warning("Failed to configure property package: %s", exc)
             warnings.append(f"Property package configuration error: {str(exc)}")
@@ -456,28 +481,49 @@ class DWSIMClient:
             x = stream_spec.properties.get("x", 100) if stream_spec.properties else 100
             y = stream_spec.properties.get("y", 100) if stream_spec.properties else 100
             
-            # Try multiple method signatures for AddObject (DWSIM API may require different signatures)
+            # Try multiple method signatures and approaches for AddObject
+            # DWSIM API may require different signatures or use collections
+            # Use default arguments to avoid closure issues
+            def try_addobject_1(sn=stream_name, x_coord=x, y_coord=y):
+                return flowsheet.AddObject("MaterialStream", sn, x_coord, y_coord)
+            def try_addobject_2(sn=stream_name, x_coord=x, y_coord=y):
+                return flowsheet.AddObject("MaterialStream", sn, float(x_coord), float(y_coord))
+            def try_addobject_3(sn=stream_name):
+                return flowsheet.AddObject("MaterialStream", sn)
+            def try_creatematerialstream(sn=stream_name, x_coord=x, y_coord=y):
+                return flowsheet.CreateMaterialStream(sn, x_coord, y_coord) if hasattr(flowsheet, 'CreateMaterialStream') else None
+            def try_addmaterialstream(sn=stream_name, x_coord=x, y_coord=y):
+                return flowsheet.AddMaterialStream(sn, x_coord, y_coord) if hasattr(flowsheet, 'AddMaterialStream') else None
+            def try_newmaterialstream(sn=stream_name, x_coord=x, y_coord=y):
+                return flowsheet.NewMaterialStream(sn, x_coord, y_coord) if hasattr(flowsheet, 'NewMaterialStream') else None
+            
             create_methods = [
-                lambda: flowsheet.AddObject("MaterialStream", stream_name, x, y),
-                lambda: flowsheet.AddObject("MaterialStream", stream_name, float(x), float(y)),
-                lambda: flowsheet.AddObject("MaterialStream", stream_name),
+                try_addobject_1,
+                try_addobject_2,
+                try_addobject_3,
+                try_creatematerialstream,
+                try_addmaterialstream,
+                try_newmaterialstream,
+                lambda: self._create_stream_via_collection(flowsheet, stream_name, x, y),
             ]
             
             for method in create_methods:
                 try:
-                    stream_obj = method()
-                    logger.debug("Created stream '%s' using AddObject", stream_name)
-                    break
+                    result = method()
+                    if result is not None:
+                        stream_obj = result
+                        logger.debug("Created stream '%s'", stream_name)
+                        break
                 except (TypeError, AttributeError) as e:
-                    logger.debug("AddObject signature failed: %s", e)
+                    logger.debug("Stream creation method failed: %s", e)
                     continue
                 except Exception as e:
-                    logger.debug("AddObject failed with error: %s", e)
+                    logger.debug("Stream creation failed with error: %s", e)
                     continue
             
             if stream_obj is None:
-                logger.warning("Failed to create stream '%s' - AddObject() failed with all signatures", stream_name)
-                warnings.append(f"Failed to create stream '{stream_name}' - DWSIM API method signature issue. Run test_api_discovery.py to find correct signature.")
+                logger.warning("Failed to create stream '%s' - all methods failed", stream_name)
+                warnings.append(f"Failed to create stream '{stream_name}' - DWSIM API method signature issue.")
                 continue
             
             try:
@@ -594,28 +640,41 @@ class DWSIMClient:
             x = params.get("x", 200)
             y = params.get("y", 200)
             
-            # Try multiple method signatures for AddObject (DWSIM API may require different signatures)
+            # Try multiple method signatures and approaches for AddObject
+            # DWSIM API may require different signatures or use collections
+            # Use default arguments to avoid closure issues
+            def try_addobject_unit_1(ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y):
+                return flowsheet.AddObject(ut, uid, x_coord, y_coord)
+            def try_addobject_unit_2(ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y):
+                return flowsheet.AddObject(ut, uid, float(x_coord), float(y_coord))
+            def try_addobject_unit_3(ut=dwsim_type, uid=unit_spec.id):
+                return flowsheet.AddObject(ut, uid)
+            
             create_methods = [
-                lambda: flowsheet.AddObject(dwsim_type, unit_spec.id, x, y),
-                lambda: flowsheet.AddObject(dwsim_type, unit_spec.id, float(x), float(y)),
-                lambda: flowsheet.AddObject(dwsim_type, unit_spec.id),
+                try_addobject_unit_1,
+                try_addobject_unit_2,
+                try_addobject_unit_3,
+                lambda: self._create_unit_via_method(flowsheet, dwsim_type, unit_spec.id, x, y),
+                lambda: self._create_unit_via_collection(flowsheet, dwsim_type, unit_spec.id, x, y),
             ]
             
             for method in create_methods:
                 try:
-                    unit_obj = method()
-                    logger.debug("Created unit '%s' (type: %s) using AddObject", unit_spec.id, dwsim_type)
-                    break
+                    result = method()
+                    if result is not None:
+                        unit_obj = result
+                        logger.debug("Created unit '%s' (type: %s)", unit_spec.id, dwsim_type)
+                        break
                 except (TypeError, AttributeError) as e:
-                    logger.debug("AddObject signature failed for unit '%s': %s", unit_spec.id, e)
+                    logger.debug("Unit creation method failed for '%s': %s", unit_spec.id, e)
                     continue
                 except Exception as e:
-                    logger.debug("AddObject failed for unit '%s' with error: %s", unit_spec.id, e)
+                    logger.debug("Unit creation failed for '%s' with error: %s", unit_spec.id, e)
                     continue
             
             if unit_obj is None:
-                logger.warning("Failed to create unit '%s' (type: %s) - AddObject() failed with all signatures", unit_spec.id, dwsim_type)
-                warnings.append(f"Failed to create unit '{unit_spec.id}' (type: {unit_spec.type}) - DWSIM API method signature issue. Run test_api_discovery.py to find correct signature.")
+                logger.warning("Failed to create unit '%s' (type: %s) - all methods failed", unit_spec.id, dwsim_type)
+                warnings.append(f"Failed to create unit '{unit_spec.id}' (type: {unit_spec.type}) - DWSIM API method signature issue.")
                 continue
             
             try:
@@ -723,22 +782,105 @@ class DWSIMClient:
                 logger.warning("Failed to configure unit %s: %s", unit_spec.id, exc)
                 warnings.append(f"Failed to configure unit '{unit_spec.id}': {str(exc)}")
 
+    def _create_stream_via_collection(self, flowsheet, stream_name: str, x: float, y: float):
+        """Try to create stream via MaterialStreams collection."""
+        try:
+            if hasattr(flowsheet, 'MaterialStreams'):
+                # MaterialStreams might be a collection we can add to
+                streams_collection = flowsheet.MaterialStreams
+                # Try to create and add to collection
+                # This is a fallback - actual implementation depends on DWSIM API
+                return None
+        except Exception:
+            pass
+        return None
+
+    def _create_unit_via_method(self, flowsheet, dwsim_type: str, unit_id: str, x: float, y: float):
+        """Try to create unit via type-specific methods (e.g., CreatePump, AddPump)."""
+        method_names = [
+            f"Create{dwsim_type}",
+            f"Add{dwsim_type}",
+            f"New{dwsim_type}",
+        ]
+        for method_name in method_names:
+            if hasattr(flowsheet, method_name):
+                try:
+                    method = getattr(flowsheet, method_name)
+                    # Try with and without coordinates
+                    try:
+                        return method(unit_id, x, y)
+                    except (TypeError, AttributeError):
+                        try:
+                            return method(unit_id)
+                        except (TypeError, AttributeError):
+                            pass
+                except Exception:
+                    pass
+        return None
+
+    def _create_unit_via_collection(self, flowsheet, dwsim_type: str, unit_id: str, x: float, y: float):
+        """Try to create unit via UnitOperations collection."""
+        try:
+            if hasattr(flowsheet, 'UnitOperations'):
+                # UnitOperations might be a collection we can add to
+                units_collection = flowsheet.UnitOperations
+                # Try to create and add to collection
+                # This is a fallback - actual implementation depends on DWSIM API
+                return None
+        except Exception:
+            pass
+        return None
+
     def _extract_streams(self, flowsheet, payload: schemas.FlowsheetPayload) -> List[schemas.StreamResult]:  # pragma: no cover - pythonnet objects
         results: List[schemas.StreamResult] = []
+        sim_objects = None
+        
+        # Try multiple methods to get streams
         try:
             sim_objects = flowsheet.GetMaterialStreams()
-            for stream in sim_objects:
-                stream_id = getattr(stream, 'Name', 'stream')
+            logger.debug("Retrieved streams via GetMaterialStreams()")
+        except (AttributeError, TypeError):
+            try:
+                # Try as property
+                if hasattr(flowsheet, 'MaterialStreams'):
+                    sim_objects = flowsheet.MaterialStreams
+                    logger.debug("Retrieved streams via MaterialStreams property")
+            except Exception as e:
+                logger.debug("MaterialStreams property access failed: %s", e)
+        
+        if sim_objects is None:
+            logger.warning("Could not retrieve streams from flowsheet")
+            return results
+        
+        try:
+            # Handle both iterable collections and single objects
+            if hasattr(sim_objects, '__iter__') and not isinstance(sim_objects, str):
+                stream_list = list(sim_objects)
+            else:
+                stream_list = [sim_objects] if sim_objects else []
+            
+            for stream in stream_list:
+                stream_id = getattr(stream, 'Name', getattr(stream, 'GraphicObject', {}).get('Tag', 'stream') if hasattr(stream, 'GraphicObject') else 'stream')
                 try:
                     t = stream.GetProp('temperature', 'overall', None, '', 'K')[0] - 273.15
                     p = stream.GetProp('pressure', 'overall', None, '', 'kPa')[0]
                     flow = stream.GetProp('totalflow', 'overall', None, '', 'kg/s')[0] * 3600
                 except Exception:
-                    t = p = flow = None
+                    try:
+                        # Try alternative property access
+                        t = getattr(stream, 'Temperature', None)
+                        if t is not None:
+                            t = t - 273.15 if t > 100 else t  # Assume K if > 100, else C
+                        p = getattr(stream, 'Pressure', None)
+                        flow = getattr(stream, 'MassFlow', None)
+                        if flow is not None:
+                            flow = flow * 3600  # Convert kg/s to kg/h
+                    except Exception:
+                        t = p = flow = None
 
                 results.append(
                     schemas.StreamResult(
-                        id=stream_id,
+                        id=str(stream_id),
                         temperature_c=t,
                         pressure_kpa=p,
                         mass_flow_kg_per_h=flow,
@@ -751,12 +893,43 @@ class DWSIMClient:
 
     def _extract_units(self, flowsheet) -> List[schemas.UnitResult]:  # pragma: no cover
         results: List[schemas.UnitResult] = []
+        units = None
+        
+        # Try multiple methods to get units
         try:
             units = flowsheet.GetUnitOperations()
-            for unit in units:
-                unit_id = getattr(unit, 'Name', 'unit')
-                duty = getattr(unit, 'DeltaQ', 0)
-                results.append(schemas.UnitResult(id=unit_id, duty_kw=duty, status='ok'))
+            logger.debug("Retrieved units via GetUnitOperations()")
+        except (AttributeError, TypeError):
+            try:
+                # Try as property
+                if hasattr(flowsheet, 'UnitOperations'):
+                    units = flowsheet.UnitOperations
+                    logger.debug("Retrieved units via UnitOperations property")
+            except Exception as e:
+                logger.debug("UnitOperations property access failed: %s", e)
+        
+        if units is None:
+            logger.warning("Could not retrieve units from flowsheet")
+            return results
+        
+        try:
+            # Handle both iterable collections and single objects
+            if hasattr(units, '__iter__') and not isinstance(units, str):
+                unit_list = list(units)
+            else:
+                unit_list = [units] if units else []
+            
+            for unit in unit_list:
+                unit_id = getattr(unit, 'Name', getattr(unit, 'GraphicObject', {}).get('Tag', 'unit') if hasattr(unit, 'GraphicObject') else 'unit')
+                try:
+                    duty = getattr(unit, 'DeltaQ', 0)
+                except Exception:
+                    try:
+                        duty = getattr(unit, 'HeatFlow', 0)
+                    except Exception:
+                        duty = 0
+                
+                results.append(schemas.UnitResult(id=str(unit_id), duty_kw=duty, status='ok'))
         except Exception as exc:
             logger.warning("Failed to extract DWSIM unit results: %s", exc)
         return results

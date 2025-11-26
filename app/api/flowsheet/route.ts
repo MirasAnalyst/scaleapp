@@ -258,13 +258,21 @@ export async function POST(request: NextRequest) {
     - VALID PATTERNS: Feed equipment (only outgoing), Product equipment (only incoming), Process equipment (both incoming and outgoing)
     - INVALID PATTERN: Equipment with no connections at all
     - Either connect all equipment to the process flow or don't create it
+    - BEFORE returning JSON, verify: Every node.id in nodes[] appears in at least one edge in edges[] (as either source or target)
+    - MANDATORY CHECK: Count nodes in nodes[], then count how many unique node IDs appear in edges[]. These numbers must match (every node must be in an edge)
     
-    🔥 HEAT EXCHANGER CONNECTIVITY (CRITICAL):
+    🔥 HEAT EXCHANGER CONNECTIVITY (CRITICAL - READ THIS CAREFULLY):
     - Every heat exchanger (shellTubeHX, heaterCooler, condenser, airCooler) MUST be connected
+    - If you create a heat exchanger node, you MUST IMMEDIATELY create edges for it in the same response
     - For coolers/condensers: Connect the hot process stream through the exchanger
     - Create TWO edges for a cooler: one TO the cooler (hot-in-left) and one FROM the cooler (hot-out-right)
-    - Example: If you create "hx-cooler-1", create edges connecting it to upstream and downstream equipment
-    - NEVER create a heat exchanger without creating edges that connect it to the process flow
+    - Example: If you create "hx-cooler-1", you MUST create these edges:
+      * Edge TO cooler: {"source": "upstream-equipment-id", "sourceHandle": "outlet-handle", "target": "hx-cooler-1", "targetHandle": "hot-in-left", "type": "step"}
+      * Edge FROM cooler: {"source": "hx-cooler-1", "sourceHandle": "hot-out-right", "target": "downstream-equipment-id", "targetHandle": "inlet-handle", "type": "step"}
+    - NEVER create a heat exchanger node without creating edges that connect it to the process flow
+    - If you cannot logically connect a heat exchanger, DO NOT create it in the nodes array
+    - MANDATORY RULE: For every heat exchanger in nodes[], there MUST be at least one edge in edges[] that has that heat exchanger as source OR target
+    - CRITICAL: Every heat exchanger in nodes[] must appear in at least one edge in edges[]
     
     🏭 COLUMN CONNECTIVITY (CRITICAL):
     - ALL columns (distillation, vacuum, packed, absorber, stripper) MUST have connections
@@ -286,27 +294,45 @@ export async function POST(request: NextRequest) {
     Create meaningful connections between equipment.
     All edges should use type: "step" for horizontal/vertical lines.
     Provide detailed DWSIM setup instructions (not Aspen HYSYS).
+    
+    🔍 BEFORE RETURNING JSON - MANDATORY CONNECTIVITY VERIFICATION:
+    1. List every node.id from nodes[]
+    2. List every "source" and "target" from edges[]
+    3. Verify: Every node.id appears in the edge list (as source OR target)
+    4. If ANY node.id is missing from edges[], you have two options:
+       a) Add an edge connecting that node to another node, OR
+       b) Remove that node from nodes[] entirely
+    5. DO NOT return JSON until every node is connected via at least one edge
+    6. This check is MANDATORY - isolated equipment will cause the generation to fail
 
-    ✅ VALIDATION CHECKLIST (must pass before returning JSON):
-    - Every edge has sourceHandle and targetHandle
-    - Handles used exist in the ports of the corresponding nodes
-    - Column overhead uses overhead-top; bottoms uses bottoms-bottom; reflux uses reflux-top
-    - separator3p uses gas-top, oil-right, water-bottom
-    - Pumps/compressors use suction-left → discharge-right
-    - Heat exchangers hot/cold sides not crossed
-    - Keep main process streams only (no utilities or signal lines)
-    - Streams connect at LOGICALLY CORRECT physical locations (top/bottom/sides)
-    - ALL equipment has at least one connection (NO completely isolated units)
-    - ALL columns (distillation, vacuum, packed, absorber, stripper) have feed and product edges
-    - Process flow is COMPLETE and CONTINUOUS from feed to products
-    - Feed equipment can have only outgoing connections (VALID)
-    - Product equipment can have only incoming connections (VALID)
-    - Process equipment should have both incoming and outgoing connections (VALID)
-    - CRITICAL: Every node in the "nodes" array must appear in at least one edge in the "edges" array
-    - All unit operation types are DWSIM-supported (see list above)
-    - Property package is DWSIM-supported (Peng-Robinson, NRTL, UNIFAC, etc.)
-    - Feed streams have temperature, pressure, and composition specified in stream.data.properties
-    - No unsupported unit types (recipPump, controlValve, etc.) are used - use alternatives instead
+    ✅ VALIDATION CHECKLIST (must pass before returning JSON - CHECK EACH ITEM):
+    1. Every edge has sourceHandle and targetHandle
+    2. Handles used exist in the ports of the corresponding nodes
+    3. Column overhead uses overhead-top; bottoms uses bottoms-bottom; reflux uses reflux-top
+    4. separator3p uses gas-top, oil-right, water-bottom
+    5. Pumps/compressors use suction-left → discharge-right
+    6. Heat exchangers hot/cold sides not crossed
+    7. Keep main process streams only (no utilities or signal lines)
+    8. Streams connect at LOGICALLY CORRECT physical locations (top/bottom/sides)
+    9. ALL equipment has at least one connection (NO completely isolated units)
+    10. ALL columns (distillation, vacuum, packed, absorber, stripper) have feed and product edges
+    11. Process flow is COMPLETE and CONTINUOUS from feed to products
+    12. Feed equipment can have only outgoing connections (VALID)
+    13. Product equipment can have only incoming connections (VALID)
+    14. Process equipment should have both incoming and outgoing connections (VALID)
+    15. CRITICAL: Every node in the "nodes" array must appear in at least one edge in the "edges" array
+    16. MANDATORY CONNECTIVITY CHECK: For each node in nodes[], verify it appears as "source" or "target" in at least one edge in edges[]
+    17. MANDATORY HEAT EXCHANGER CHECK: If nodes[] contains any heat exchanger (shellTubeHX, heaterCooler, condenser, airCooler), verify edges[] contains edges connecting it
+    18. All unit operation types are DWSIM-supported (see list above)
+    19. Property package is DWSIM-supported (Peng-Robinson, NRTL, UNIFAC, etc.)
+    20. Feed streams have temperature, pressure, and composition specified in stream.data.properties
+    21. No unsupported unit types (recipPump, controlValve, etc.) are used - use alternatives instead
+    
+    🔍 FINAL CONNECTIVITY VERIFICATION (DO THIS BEFORE RETURNING JSON):
+    - List all node IDs from nodes[]
+    - List all source and target IDs from edges[]
+    - Every node ID must appear in the edge list (as source OR target)
+    - If any node ID is missing from edges[], either add an edge for it or remove that node
 
     📋 EXAMPLE (three-phase separation with proper spacing):
     {
@@ -681,10 +707,29 @@ Return ONLY this JSON structure:
 
     // Only flag as error if there are truly isolated nodes (not connected at all)
     if (trulyIsolatedNodes.length > 0) {
-      // If this is a retry attempt, return error immediately
+      // If this is a retry attempt, return error immediately with detailed information
       if (retryCount > 0) {
+        const isolatedDetails = trulyIsolatedNodes.map(n => {
+          const type = n.type || 'unknown';
+          const label = n.data?.label || n.id;
+          return `${n.id} (${type}, "${label}")`;
+        }).join('; ');
+        
         return NextResponse.json(
-          { error: `Isolated equipment found after retry: ${trulyIsolatedNodes.map(n => n.id).join(', ')}. All equipment must be connected to the main process flow.` },
+          { 
+            error: `Isolated equipment found after retry: ${trulyIsolatedNodes.map(n => n.id).join(', ')}. All equipment must be connected to the main process flow.`,
+            details: {
+              isolatedEquipment: trulyIsolatedNodes.map(n => ({
+                id: n.id,
+                type: n.type,
+                label: n.data?.label
+              })),
+              totalNodes: flowsheetData.nodes.length,
+              totalEdges: flowsheetData.edges.length,
+              connectedNodes: Array.from(connectedNodes),
+              message: `The following equipment has no connections: ${isolatedDetails}. Each piece of equipment must appear in at least one edge (as source or target).`
+            }
+          },
           { status: 500 }
         );
       }
@@ -705,19 +750,76 @@ Return ONLY this JSON structure:
       if (isolatedHeatExchangers.length > 0) {
         const hxList = isolatedHeatExchangers.map(n => n.id).join(', ');
         const exampleHx = isolatedHeatExchangers[0].id;
+        const hxType = isolatedHeatExchangers[0].type || 'heaterCooler';
+        const isCooler = ['heaterCooler', 'condenser', 'airCooler'].includes(hxType);
+        
+        // Find upstream and downstream equipment from existing edges
+        const allConnectedNodes = Array.from(connectedNodes);
+        const upstreamExample = allConnectedNodes.length > 0 ? allConnectedNodes[0] : 'upstream-equipment-id';
+        const downstreamExample = allConnectedNodes.length > 1 ? allConnectedNodes[1] : 'downstream-equipment-id';
+        
         heatExchangerGuidance = `
-🔥 CRITICAL: HEAT EXCHANGER CONNECTIVITY ISSUE
-The following heat exchangers are isolated: ${hxList}
+🔥🔥🔥 CRITICAL ERROR: HEAT EXCHANGER CONNECTIVITY ISSUE 🔥🔥🔥
+The following heat exchangers are COMPLETELY ISOLATED (no connections at all): ${hxList}
 
-For EACH heat exchanger, you MUST create edges connecting it:
-- For coolers/condensers: Connect hot process stream
-  * Edge TO exchanger: {"source": "upstream-equipment-id", "sourceHandle": "outlet-handle", "target": "${exampleHx}", "targetHandle": "hot-in-left", "type": "step"}
-  * Edge FROM exchanger: {"source": "${exampleHx}", "sourceHandle": "hot-out-right", "target": "downstream-equipment-id", "targetHandle": "inlet-handle", "type": "step"}
-- For heaters: Connect cold process stream
-  * Edge TO exchanger: {"source": "upstream-equipment-id", "sourceHandle": "outlet-handle", "target": "${exampleHx}", "targetHandle": "cold-in-bottom", "type": "step"}
-  * Edge FROM exchanger: {"source": "${exampleHx}", "sourceHandle": "cold-out-top", "target": "downstream-equipment-id", "targetHandle": "inlet-handle", "type": "step"}
+🚨 MANDATORY FIX REQUIRED:
+For EACH isolated heat exchanger, you MUST do ONE of the following:
+1. ADD EDGES connecting it to the process flow, OR
+2. REMOVE it from the nodes array entirely
 
-If you cannot logically connect a heat exchanger, REMOVE it from the nodes array entirely.`;
+📋 SPECIFIC FIX FOR "${exampleHx}" (type: ${hxType}):
+${isCooler ? `
+For coolers/condensers, connect the HOT process stream:
+- Edge TO cooler: Add to edges[] array:
+  {
+    "id": "stream-to-${exampleHx}",
+    "source": "${upstreamExample}",
+    "sourceHandle": "discharge-right",
+    "target": "${exampleHx}",
+    "targetHandle": "hot-in-left",
+    "type": "step",
+    "label": "Hot Stream To Cooler"
+  }
+- Edge FROM cooler: Add to edges[] array:
+  {
+    "id": "stream-from-${exampleHx}",
+    "source": "${exampleHx}",
+    "sourceHandle": "hot-out-right",
+    "target": "${downstreamExample}",
+    "targetHandle": "suction-left",
+    "type": "step",
+    "label": "Cooled Stream"
+  }
+` : `
+For heaters, connect the COLD process stream:
+- Edge TO heater: Add to edges[] array:
+  {
+    "id": "stream-to-${exampleHx}",
+    "source": "${upstreamExample}",
+    "sourceHandle": "discharge-right",
+    "target": "${exampleHx}",
+    "targetHandle": "cold-in-bottom",
+    "type": "step",
+    "label": "Cold Stream To Heater"
+  }
+- Edge FROM heater: Add to edges[] array:
+  {
+    "id": "stream-from-${exampleHx}",
+    "source": "${exampleHx}",
+    "sourceHandle": "cold-out-top",
+    "target": "${downstreamExample}",
+    "targetHandle": "suction-left",
+    "type": "step",
+    "label": "Heated Stream"
+  }
+`}
+
+⚠️ IF YOU CANNOT LOGICALLY CONNECT THE HEAT EXCHANGER:
+- You have two options: either add edges OR remove the node entirely
+- Remove "${exampleHx}" from the nodes[] array entirely if you cannot connect it
+- Do NOT leave it in nodes[] without edges connecting it
+
+✅ VERIFICATION: After fixing, verify that "${exampleHx}" appears as "source" or "target" in at least one edge in edges[]`;
       }
       
       // First attempt failed, retry with enhanced prompt
@@ -770,25 +872,40 @@ ${isolatedEquipmentDetails}${heatExchangerGuidance}
 - vacuum column: feed → col-vacuum-1 → overhead/bottoms → next equipment (with edges connecting all)
 
 📋 SPECIFIC EXAMPLE FOR HEAT EXCHANGER (hx-cooler-1):
-If you create "hx-cooler-1", you MUST create edges like:
+If you create "hx-cooler-1" in nodes[], you MUST IMMEDIATELY create edges in edges[] like:
 {
   "id": "stream-to-cooler",
   "source": "upstream-equipment-id",
-  "sourceHandle": "outlet-handle",
+  "sourceHandle": "discharge-right",
   "target": "hx-cooler-1",
   "targetHandle": "hot-in-left",
-  "type": "step"
+  "type": "step",
+  "label": "Hot Stream"
 },
 {
   "id": "stream-from-cooler",
   "source": "hx-cooler-1",
   "sourceHandle": "hot-out-right",
   "target": "downstream-equipment-id",
-  "targetHandle": "inlet-handle",
-  "type": "step"
+  "targetHandle": "suction-left",
+  "type": "step",
+  "label": "Cooled Stream"
 }
 
-🚨 FINAL WARNING: If you create any equipment with NO connections at all, the generation will fail. Every piece of equipment must be part of the continuous process flow. You MUST create edges in the "edges" array for every piece of equipment you create.`;
+⚠️ CRITICAL: If you cannot find logical upstream/downstream equipment for a heat exchanger, DO NOT create the heat exchanger node. Only create equipment that you can connect.
+
+🚨 FINAL WARNING: If you create any equipment with NO connections at all, the generation will fail. Every piece of equipment must be part of the continuous process flow. You MUST create edges in the "edges" array for every piece of equipment you create.
+
+🔍 MANDATORY PRE-RETURN CHECKLIST (node counting verification):
+1. Count nodes in nodes[]: N nodes
+2. Extract all unique node IDs from edges[] (from "source" and "target" fields): M unique node IDs
+3. Verify N == M (every node must appear in at least one edge) - this is node counting verification
+4. If N != M, either:
+   - Add missing edges for nodes that don't appear in edges[], OR
+   - Remove nodes that don't appear in edges[] from nodes[]
+5. Specifically check: Does "${trulyIsolatedNodes.map(n => n.id).join('", "')}" appear in any edge? If NO, fix it.
+
+✅ ONLY return JSON when ALL nodes are connected via edges.`;
 
       // Recursive call with retry count
       const retryRequest = new NextRequest(request.url, {
