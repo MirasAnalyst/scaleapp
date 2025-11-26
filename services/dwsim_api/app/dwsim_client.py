@@ -208,7 +208,10 @@ class DWSIMClient:
                     raise
             
             # Load other DLLs (but skip ones that are known to cause issues)
-            skip_dlls = {'DWSIM.Automation.dll'}  # Already loaded
+            skip_dlls = {
+                'DWSIM.Automation.dll',  # Already loaded
+                'ThermoCS.dll',  # Known to cause FileNotFoundException on some systems
+            }
             for dll_file in self._lib_path.glob('*.dll'):
                 if dll_file.name in skip_dlls:
                     continue
@@ -216,8 +219,12 @@ class DWSIMClient:
                     clr.AddReference(str(dll_file))
                     logger.debug(f"Added reference to {dll_file.name}")
                 except Exception as e:
-                    # Some DLLs may fail to load (e.g., native dependencies, UI components), which is OK
-                    logger.debug(f"Could not add reference to {dll_file.name}: {e}")
+                    # Some DLLs may fail to load (e.g., native dependencies, UI components, missing dependencies), which is OK
+                    # ThermoCS.dll may fail to load due to missing dependencies - this is expected and handled gracefully
+                    if 'ThermoCS' in dll_file.name:
+                        logger.debug(f"ThermoCS.dll not available (expected on some systems): {e}")
+                    else:
+                        logger.debug(f"Could not add reference to {dll_file.name}: {e}")
 
             from DWSIM.Automation import Automation3  # type: ignore
 
@@ -481,9 +488,21 @@ class DWSIMClient:
             x = stream_spec.properties.get("x", 100) if stream_spec.properties else 100
             y = stream_spec.properties.get("y", 100) if stream_spec.properties else 100
             
-            # Try multiple method signatures and approaches for AddObject
-            # DWSIM API may require different signatures or use collections
+            # Try multiple method signatures and approaches
+            # Based on test output, AddObject() doesn't work, but AddFlowsheetObject, AddSimulationObject, AddGraphicObject are available
             # Use default arguments to avoid closure issues
+            def try_addflowsheetobject_1(sn=stream_name, x_coord=x, y_coord=y):
+                return flowsheet.AddFlowsheetObject("MaterialStream", sn, x_coord, y_coord) if hasattr(flowsheet, 'AddFlowsheetObject') else None
+            def try_addflowsheetobject_2(sn=stream_name):
+                return flowsheet.AddFlowsheetObject("MaterialStream", sn) if hasattr(flowsheet, 'AddFlowsheetObject') else None
+            def try_addsimulationobject_1(sn=stream_name, x_coord=x, y_coord=y):
+                return flowsheet.AddSimulationObject("MaterialStream", sn, x_coord, y_coord) if hasattr(flowsheet, 'AddSimulationObject') else None
+            def try_addsimulationobject_2(sn=stream_name):
+                return flowsheet.AddSimulationObject("MaterialStream", sn) if hasattr(flowsheet, 'AddSimulationObject') else None
+            def try_addgraphicobject_1(sn=stream_name, x_coord=x, y_coord=y):
+                return flowsheet.AddGraphicObject("MaterialStream", sn, x_coord, y_coord) if hasattr(flowsheet, 'AddGraphicObject') else None
+            def try_addgraphicobject_2(sn=stream_name):
+                return flowsheet.AddGraphicObject("MaterialStream", sn) if hasattr(flowsheet, 'AddGraphicObject') else None
             def try_addobject_1(sn=stream_name, x_coord=x, y_coord=y):
                 return flowsheet.AddObject("MaterialStream", sn, x_coord, y_coord)
             def try_addobject_2(sn=stream_name, x_coord=x, y_coord=y):
@@ -498,9 +517,20 @@ class DWSIMClient:
                 return flowsheet.NewMaterialStream(sn, x_coord, y_coord) if hasattr(flowsheet, 'NewMaterialStream') else None
             
             create_methods = [
+                # Try AddFlowsheetObject first (most likely based on available methods)
+                try_addflowsheetobject_1,
+                try_addflowsheetobject_2,
+                # Try AddSimulationObject
+                try_addsimulationobject_1,
+                try_addsimulationobject_2,
+                # Try AddGraphicObject
+                try_addgraphicobject_1,
+                try_addgraphicobject_2,
+                # Fallback to AddObject (may work in some DWSIM versions)
                 try_addobject_1,
                 try_addobject_2,
                 try_addobject_3,
+                # Try other alternatives
                 try_creatematerialstream,
                 try_addmaterialstream,
                 try_newmaterialstream,
@@ -640,9 +670,21 @@ class DWSIMClient:
             x = params.get("x", 200)
             y = params.get("y", 200)
             
-            # Try multiple method signatures and approaches for AddObject
-            # DWSIM API may require different signatures or use collections
+            # Try multiple method signatures and approaches
+            # Based on test output, AddObject() doesn't work, but AddFlowsheetObject, AddSimulationObject, AddGraphicObject are available
             # Use default arguments to avoid closure issues
+            def try_addflowsheetobject_unit_1(ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y):
+                return flowsheet.AddFlowsheetObject(ut, uid, x_coord, y_coord) if hasattr(flowsheet, 'AddFlowsheetObject') else None
+            def try_addflowsheetobject_unit_2(ut=dwsim_type, uid=unit_spec.id):
+                return flowsheet.AddFlowsheetObject(ut, uid) if hasattr(flowsheet, 'AddFlowsheetObject') else None
+            def try_addsimulationobject_unit_1(ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y):
+                return flowsheet.AddSimulationObject(ut, uid, x_coord, y_coord) if hasattr(flowsheet, 'AddSimulationObject') else None
+            def try_addsimulationobject_unit_2(ut=dwsim_type, uid=unit_spec.id):
+                return flowsheet.AddSimulationObject(ut, uid) if hasattr(flowsheet, 'AddSimulationObject') else None
+            def try_addgraphicobject_unit_1(ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y):
+                return flowsheet.AddGraphicObject(ut, uid, x_coord, y_coord) if hasattr(flowsheet, 'AddGraphicObject') else None
+            def try_addgraphicobject_unit_2(ut=dwsim_type, uid=unit_spec.id):
+                return flowsheet.AddGraphicObject(ut, uid) if hasattr(flowsheet, 'AddGraphicObject') else None
             def try_addobject_unit_1(ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y):
                 return flowsheet.AddObject(ut, uid, x_coord, y_coord)
             def try_addobject_unit_2(ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y):
@@ -651,10 +693,22 @@ class DWSIMClient:
                 return flowsheet.AddObject(ut, uid)
             
             create_methods = [
+                # Try AddFlowsheetObject first (most likely based on available methods)
+                try_addflowsheetobject_unit_1,
+                try_addflowsheetobject_unit_2,
+                # Try AddSimulationObject
+                try_addsimulationobject_unit_1,
+                try_addsimulationobject_unit_2,
+                # Try AddGraphicObject
+                try_addgraphicobject_unit_1,
+                try_addgraphicobject_unit_2,
+                # Fallback to AddObject (may work in some DWSIM versions)
                 try_addobject_unit_1,
                 try_addobject_unit_2,
                 try_addobject_unit_3,
+                # Try type-specific methods
                 lambda: self._create_unit_via_method(flowsheet, dwsim_type, unit_spec.id, x, y),
+                # Try collection-based creation
                 lambda: self._create_unit_via_collection(flowsheet, dwsim_type, unit_spec.id, x, y),
             ]
             

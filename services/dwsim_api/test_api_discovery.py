@@ -114,6 +114,16 @@ def test_dwsim_api():
         # If AddObject didn't work, try alternative methods
         if stream is None:
             alt_methods = [
+                # Try AddFlowsheetObject (seen in available methods)
+                ("AddFlowsheetObject('MaterialStream', ...)", lambda: flowsheet.AddFlowsheetObject("MaterialStream", "test-stream", 100, 100) if hasattr(flowsheet, 'AddFlowsheetObject') else None),
+                ("AddFlowsheetObject('MaterialStream', ...) no coords", lambda: flowsheet.AddFlowsheetObject("MaterialStream", "test-stream") if hasattr(flowsheet, 'AddFlowsheetObject') else None),
+                # Try AddSimulationObject
+                ("AddSimulationObject('MaterialStream', ...)", lambda: flowsheet.AddSimulationObject("MaterialStream", "test-stream", 100, 100) if hasattr(flowsheet, 'AddSimulationObject') else None),
+                ("AddSimulationObject('MaterialStream', ...) no coords", lambda: flowsheet.AddSimulationObject("MaterialStream", "test-stream") if hasattr(flowsheet, 'AddSimulationObject') else None),
+                # Try AddGraphicObject
+                ("AddGraphicObject('MaterialStream', ...)", lambda: flowsheet.AddGraphicObject("MaterialStream", "test-stream", 100, 100) if hasattr(flowsheet, 'AddGraphicObject') else None),
+                ("AddGraphicObject('MaterialStream', ...) no coords", lambda: flowsheet.AddGraphicObject("MaterialStream", "test-stream") if hasattr(flowsheet, 'AddGraphicObject') else None),
+                # Try other alternatives
                 ("CreateMaterialStream", lambda: flowsheet.CreateMaterialStream("test-stream", 100, 100) if hasattr(flowsheet, 'CreateMaterialStream') else None),
                 ("AddMaterialStream", lambda: flowsheet.AddMaterialStream("test-stream", 100, 100) if hasattr(flowsheet, 'AddMaterialStream') else None),
                 ("NewMaterialStream", lambda: flowsheet.NewMaterialStream("test-stream", 100, 100) if hasattr(flowsheet, 'NewMaterialStream') else None),
@@ -123,10 +133,10 @@ def test_dwsim_api():
                 try:
                     stream = method()
                     if stream is not None:
-                        logger.info(f"✓ {method_name}() works")
+                        logger.info(f"✓ {method_name} works")
                         break
                 except Exception as e:
-                    logger.debug(f"✗ {method_name}() failed: {e}")
+                    logger.debug(f"✗ {method_name} failed: {e}")
         
         if stream:
             logger.info(f"  Stream type: {type(stream)}")
@@ -166,6 +176,16 @@ def test_dwsim_api():
         # If AddObject didn't work, try alternative methods
         if unit is None:
             alt_methods = [
+                # Try AddFlowsheetObject (seen in available methods)
+                ("AddFlowsheetObject('Pump', ...)", lambda: flowsheet.AddFlowsheetObject("Pump", "test-pump", 300, 100) if hasattr(flowsheet, 'AddFlowsheetObject') else None),
+                ("AddFlowsheetObject('Pump', ...) no coords", lambda: flowsheet.AddFlowsheetObject("Pump", "test-pump") if hasattr(flowsheet, 'AddFlowsheetObject') else None),
+                # Try AddSimulationObject
+                ("AddSimulationObject('Pump', ...)", lambda: flowsheet.AddSimulationObject("Pump", "test-pump", 300, 100) if hasattr(flowsheet, 'AddSimulationObject') else None),
+                ("AddSimulationObject('Pump', ...) no coords", lambda: flowsheet.AddSimulationObject("Pump", "test-pump") if hasattr(flowsheet, 'AddSimulationObject') else None),
+                # Try AddGraphicObject
+                ("AddGraphicObject('Pump', ...)", lambda: flowsheet.AddGraphicObject("Pump", "test-pump", 300, 100) if hasattr(flowsheet, 'AddGraphicObject') else None),
+                ("AddGraphicObject('Pump', ...) no coords", lambda: flowsheet.AddGraphicObject("Pump", "test-pump") if hasattr(flowsheet, 'AddGraphicObject') else None),
+                # Try other alternatives
                 ("CreatePump", lambda: flowsheet.CreatePump("test-pump", 300, 100) if hasattr(flowsheet, 'CreatePump') else None),
                 ("AddPump", lambda: flowsheet.AddPump("test-pump", 300, 100) if hasattr(flowsheet, 'AddPump') else None),
                 ("NewPump", lambda: flowsheet.NewPump("test-pump", 300, 100) if hasattr(flowsheet, 'NewPump') else None),
@@ -175,10 +195,10 @@ def test_dwsim_api():
                 try:
                     unit = method()
                     if unit is not None:
-                        logger.info(f"✓ {method_name}() works")
+                        logger.info(f"✓ {method_name} works")
                         break
                 except Exception as e:
-                    logger.debug(f"✗ {method_name}() failed: {e}")
+                    logger.debug(f"✗ {method_name} failed: {e}")
         
         if unit:
             logger.info(f"  Unit type: {type(unit)}")
