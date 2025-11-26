@@ -9,11 +9,78 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from loguru import logger
-import inspect
 
 # Set up logging
 logger.remove()
 logger.add(sys.stderr, level="DEBUG")
+
+def _find_object_type_enum():
+    """Locate the DWSIM ObjectType enum used by AddObject/AddFlowsheetObject."""
+    candidates = [
+        ("DWSIM.Interfaces.Enums.GraphicObjects", ["ObjectType", "GraphicObjectType"]),
+        ("DWSIM.Interfaces.Enums", ["GraphicObjectType", "ObjectType"]),
+        ("DWSIM.Enums.GraphicObjects", ["ObjectType", "GraphicObjectType"]),
+    ]
+    for module_path, type_names in candidates:
+        try:
+            module = __import__(module_path, fromlist=type_names)
+        except ImportError:
+            continue
+        for type_name in type_names:
+            enum_type = getattr(module, type_name, None)
+            if enum_type:
+                logger.info(f"Found ObjectType enum: {module_path}.{type_name}")
+                try:
+                    members = [m for m in dir(enum_type) if not m.startswith('_')]
+                    logger.debug(f"  Enum members (first 20): {members[:20]}")
+                except Exception:
+                    pass
+                return enum_type
+    logger.warning("Could not find DWSIM ObjectType enum; will fall back to string-based calls")
+    return None
+
+def _get_enum_member(enum_type, *names):
+    """Return the first matching enum value from a list of candidate names."""
+    if not enum_type:
+        return None
+    for name in names:
+        if hasattr(enum_type, name):
+            return getattr(enum_type, name)
+        # Try a variant without underscores/spaces
+        compact = name.replace("_", "").replace(" ", "")
+        if hasattr(enum_type, compact):
+            return getattr(enum_type, compact)
+    return None
+
+def _log_overloads(obj, method_name):
+    """Log the .NET overload signatures for a given method."""
+    try:
+        import System
+        overloads = [mi for mi in type(obj).GetMethods() if mi.Name == method_name]
+        if not overloads:
+            logger.info(f"No overloads found for {method_name}")
+            return
+        logger.info(f"{method_name} overloads:")
+        for mi in overloads:
+            params = ", ".join(f"{p.ParameterType.Name} {p.Name}" for p in mi.GetParameters())
+            logger.info(f"  {method_name}({params}) -> {mi.ReturnType.Name}")
+    except Exception as e:
+        logger.debug(f"Could not inspect overloads for {method_name}: {e}")
+
+def _try_methods(methods):
+    """Attempt a list of (description, callable) pairs, returning first non-None result."""
+    for desc, method in methods:
+        if method is None:
+            continue
+        try:
+            result = method()
+            if result is not None:
+                logger.info(f"✓ {desc} works")
+                return result
+            logger.debug(f"✗ {desc} returned None")
+        except Exception as e:
+            logger.debug(f"✗ {desc} failed: {e}")
+    return None
 
 def inspect_method_signatures(obj, method_name):
     """Inspect all overloads of a method."""
@@ -74,6 +141,16 @@ def test_dwsim_api():
         # Look for AddObject-related methods
         add_methods = [m for m in all_methods if 'add' in m.lower() or 'create' in m.lower() or 'new' in m.lower()]
         logger.info(f"Methods with 'add/create/new': {add_methods}")
+
+        # Inspect overloads for object-creation methods
+        for name in ["AddObject", "AddFlowsheetObject", "AddSimulationObject", "AddGraphicObject"]:
+            if hasattr(flowsheet, name):
+                _log_overloads(flowsheet, name)
+        
+        # Discover the ObjectType enum (needed for AddObject signature)
+        object_type_enum = _find_object_type_enum()
+        ms_enum = _get_enum_member(object_type_enum, "MaterialStream", "Material_Stream", "Material")
+        pump_enum = _get_enum_member(object_type_enum, "Pump")
         
         # Test 3: Property package
         logger.info("\n=== Testing Property Package ===")
@@ -94,49 +171,37 @@ def test_dwsim_api():
         # Test 5: Create material stream - try multiple signatures
         logger.info("\n=== Testing Material Stream Creation ===")
         stream = None
+        stream_methods = []
+        if ms_enum:
+            stream_methods.extend([
+                ("AddObject(ObjectType.MaterialStream, 'test-stream', 100, 100)", lambda: flowsheet.AddObject(ms_enum, "test-stream", 100.0, 100.0)),
+                ("AddObject(ObjectType.MaterialStream, 'test-stream')", lambda: flowsheet.AddObject(ms_enum, "test-stream")),
+                ("AddFlowsheetObject(ObjectType.MaterialStream, ...)", lambda: flowsheet.AddFlowsheetObject(ms_enum, "test-stream", 100.0, 100.0) if hasattr(flowsheet, 'AddFlowsheetObject') else None),
+                ("AddFlowsheetObject(ObjectType.MaterialStream, ...) no coords", lambda: flowsheet.AddFlowsheetObject(ms_enum, "test-stream") if hasattr(flowsheet, 'AddFlowsheetObject') else None),
+                ("AddSimulationObject(ObjectType.MaterialStream, ...)", lambda: flowsheet.AddSimulationObject(ms_enum, "test-stream", 100.0, 100.0) if hasattr(flowsheet, 'AddSimulationObject') else None),
+                ("AddSimulationObject(ObjectType.MaterialStream, ...) no coords", lambda: flowsheet.AddSimulationObject(ms_enum, "test-stream") if hasattr(flowsheet, 'AddSimulationObject') else None),
+            ])
         
-        # Try AddObject with different signatures
-        test_signatures = [
-            ("AddObject('MaterialStream', 'test-stream', 100, 100)", lambda: flowsheet.AddObject("MaterialStream", "test-stream", 100, 100)),
-            ("AddObject('MaterialStream', 'test-stream')", lambda: flowsheet.AddObject("MaterialStream", "test-stream")),
-            ("AddObject('MaterialStream', 'test-stream', 100.0, 100.0)", lambda: flowsheet.AddObject("MaterialStream", "test-stream", 100.0, 100.0)),
-            ("AddObject('MaterialStream', 'test-stream', float(100), float(100))", lambda: flowsheet.AddObject("MaterialStream", "test-stream", float(100), float(100))),
-        ]
+        # String/alt-name fallbacks
+        for type_name in ["MaterialStream", "Material Stream"]:
+            stream_methods.extend([
+                (f"AddFlowsheetObject('{type_name}', ...)", lambda tn=type_name: flowsheet.AddFlowsheetObject(tn, "test-stream", 100, 100) if hasattr(flowsheet, 'AddFlowsheetObject') else None),
+                (f"AddFlowsheetObject('{type_name}', ...) no coords", lambda tn=type_name: flowsheet.AddFlowsheetObject(tn, "test-stream") if hasattr(flowsheet, 'AddFlowsheetObject') else None),
+                (f"AddSimulationObject('{type_name}', ...)", lambda tn=type_name: flowsheet.AddSimulationObject(tn, "test-stream", 100, 100) if hasattr(flowsheet, 'AddSimulationObject') else None),
+                (f"AddSimulationObject('{type_name}', ...) no coords", lambda tn=type_name: flowsheet.AddSimulationObject(tn, "test-stream") if hasattr(flowsheet, 'AddSimulationObject') else None),
+                (f"AddGraphicObject('{type_name}', ...)", lambda tn=type_name: flowsheet.AddGraphicObject(tn, "test-stream", 100, 100) if hasattr(flowsheet, 'AddGraphicObject') else None),
+                (f"AddGraphicObject('{type_name}', ...) no coords", lambda tn=type_name: flowsheet.AddGraphicObject(tn, "test-stream") if hasattr(flowsheet, 'AddGraphicObject') else None),
+                (f"AddObject('{type_name}', ...)", lambda tn=type_name: flowsheet.AddObject(tn, "test-stream", 100, 100)),
+                (f"AddObject('{type_name}', ...) no coords", lambda tn=type_name: flowsheet.AddObject(tn, "test-stream")),
+            ])
         
-        for desc, method in test_signatures:
-            try:
-                stream = method()
-                logger.info(f"✓ {desc} works")
-                break
-            except Exception as e:
-                logger.debug(f"✗ {desc} failed: {e}")
+        stream_methods.extend([
+            ("CreateMaterialStream", lambda: flowsheet.CreateMaterialStream("test-stream", 100, 100) if hasattr(flowsheet, 'CreateMaterialStream') else None),
+            ("AddMaterialStream", lambda: flowsheet.AddMaterialStream("test-stream", 100, 100) if hasattr(flowsheet, 'AddMaterialStream') else None),
+            ("NewMaterialStream", lambda: flowsheet.NewMaterialStream("test-stream", 100, 100) if hasattr(flowsheet, 'NewMaterialStream') else None),
+        ])
         
-        # If AddObject didn't work, try alternative methods
-        if stream is None:
-            alt_methods = [
-                # Try AddFlowsheetObject (seen in available methods)
-                ("AddFlowsheetObject('MaterialStream', ...)", lambda: flowsheet.AddFlowsheetObject("MaterialStream", "test-stream", 100, 100) if hasattr(flowsheet, 'AddFlowsheetObject') else None),
-                ("AddFlowsheetObject('MaterialStream', ...) no coords", lambda: flowsheet.AddFlowsheetObject("MaterialStream", "test-stream") if hasattr(flowsheet, 'AddFlowsheetObject') else None),
-                # Try AddSimulationObject
-                ("AddSimulationObject('MaterialStream', ...)", lambda: flowsheet.AddSimulationObject("MaterialStream", "test-stream", 100, 100) if hasattr(flowsheet, 'AddSimulationObject') else None),
-                ("AddSimulationObject('MaterialStream', ...) no coords", lambda: flowsheet.AddSimulationObject("MaterialStream", "test-stream") if hasattr(flowsheet, 'AddSimulationObject') else None),
-                # Try AddGraphicObject
-                ("AddGraphicObject('MaterialStream', ...)", lambda: flowsheet.AddGraphicObject("MaterialStream", "test-stream", 100, 100) if hasattr(flowsheet, 'AddGraphicObject') else None),
-                ("AddGraphicObject('MaterialStream', ...) no coords", lambda: flowsheet.AddGraphicObject("MaterialStream", "test-stream") if hasattr(flowsheet, 'AddGraphicObject') else None),
-                # Try other alternatives
-                ("CreateMaterialStream", lambda: flowsheet.CreateMaterialStream("test-stream", 100, 100) if hasattr(flowsheet, 'CreateMaterialStream') else None),
-                ("AddMaterialStream", lambda: flowsheet.AddMaterialStream("test-stream", 100, 100) if hasattr(flowsheet, 'AddMaterialStream') else None),
-                ("NewMaterialStream", lambda: flowsheet.NewMaterialStream("test-stream", 100, 100) if hasattr(flowsheet, 'NewMaterialStream') else None),
-            ]
-            
-            for method_name, method in alt_methods:
-                try:
-                    stream = method()
-                    if stream is not None:
-                        logger.info(f"✓ {method_name} works")
-                        break
-                except Exception as e:
-                    logger.debug(f"✗ {method_name} failed: {e}")
+        stream = _try_methods(stream_methods)
         
         if stream:
             logger.info(f"  Stream type: {type(stream)}")
@@ -156,49 +221,36 @@ def test_dwsim_api():
         # Test 7: Create unit operation - try multiple signatures
         logger.info("\n=== Testing Unit Operation Creation ===")
         unit = None
+        unit_methods = []
+        if pump_enum:
+            unit_methods.extend([
+                ("AddObject(ObjectType.Pump, 'test-pump', 300, 100)", lambda: flowsheet.AddObject(pump_enum, "test-pump", 300.0, 100.0)),
+                ("AddObject(ObjectType.Pump, 'test-pump')", lambda: flowsheet.AddObject(pump_enum, "test-pump")),
+                ("AddFlowsheetObject(ObjectType.Pump, ...)", lambda: flowsheet.AddFlowsheetObject(pump_enum, "test-pump", 300.0, 100.0) if hasattr(flowsheet, 'AddFlowsheetObject') else None),
+                ("AddFlowsheetObject(ObjectType.Pump, ...) no coords", lambda: flowsheet.AddFlowsheetObject(pump_enum, "test-pump") if hasattr(flowsheet, 'AddFlowsheetObject') else None),
+                ("AddSimulationObject(ObjectType.Pump, ...)", lambda: flowsheet.AddSimulationObject(pump_enum, "test-pump", 300.0, 100.0) if hasattr(flowsheet, 'AddSimulationObject') else None),
+                ("AddSimulationObject(ObjectType.Pump, ...) no coords", lambda: flowsheet.AddSimulationObject(pump_enum, "test-pump") if hasattr(flowsheet, 'AddSimulationObject') else None),
+            ])
         
-        # Try AddObject with different signatures for Pump
-        test_signatures_unit = [
-            ("AddObject('Pump', 'test-pump', 300, 100)", lambda: flowsheet.AddObject("Pump", "test-pump", 300, 100)),
-            ("AddObject('Pump', 'test-pump')", lambda: flowsheet.AddObject("Pump", "test-pump")),
-            ("AddObject('Pump', 'test-pump', 300.0, 100.0)", lambda: flowsheet.AddObject("Pump", "test-pump", 300.0, 100.0)),
-            ("AddObject('Pump', 'test-pump', float(300), float(100))", lambda: flowsheet.AddObject("Pump", "test-pump", float(300), float(100))),
-        ]
+        for type_name in ["Pump"]:
+            unit_methods.extend([
+                (f"AddObject('{type_name}', ...)", lambda tn=type_name: flowsheet.AddObject(tn, "test-pump", 300, 100)),
+                (f"AddObject('{type_name}', ...) no coords", lambda tn=type_name: flowsheet.AddObject(tn, "test-pump")),
+                (f"AddFlowsheetObject('{type_name}', ...)", lambda tn=type_name: flowsheet.AddFlowsheetObject(tn, "test-pump", 300, 100) if hasattr(flowsheet, 'AddFlowsheetObject') else None),
+                (f"AddFlowsheetObject('{type_name}', ...) no coords", lambda tn=type_name: flowsheet.AddFlowsheetObject(tn, "test-pump") if hasattr(flowsheet, 'AddFlowsheetObject') else None),
+                (f"AddSimulationObject('{type_name}', ...)", lambda tn=type_name: flowsheet.AddSimulationObject(tn, "test-pump", 300, 100) if hasattr(flowsheet, 'AddSimulationObject') else None),
+                (f"AddSimulationObject('{type_name}', ...) no coords", lambda tn=type_name: flowsheet.AddSimulationObject(tn, "test-pump") if hasattr(flowsheet, 'AddSimulationObject') else None),
+                (f"AddGraphicObject('{type_name}', ...)", lambda tn=type_name: flowsheet.AddGraphicObject(tn, "test-pump", 300, 100) if hasattr(flowsheet, 'AddGraphicObject') else None),
+                (f"AddGraphicObject('{type_name}', ...) no coords", lambda tn=type_name: flowsheet.AddGraphicObject(tn, "test-pump") if hasattr(flowsheet, 'AddGraphicObject') else None),
+            ])
         
-        for desc, method in test_signatures_unit:
-            try:
-                unit = method()
-                logger.info(f"✓ {desc} works")
-                break
-            except Exception as e:
-                logger.debug(f"✗ {desc} failed: {e}")
-        
-        # If AddObject didn't work, try alternative methods
-        if unit is None:
-            alt_methods = [
-                # Try AddFlowsheetObject (seen in available methods)
-                ("AddFlowsheetObject('Pump', ...)", lambda: flowsheet.AddFlowsheetObject("Pump", "test-pump", 300, 100) if hasattr(flowsheet, 'AddFlowsheetObject') else None),
-                ("AddFlowsheetObject('Pump', ...) no coords", lambda: flowsheet.AddFlowsheetObject("Pump", "test-pump") if hasattr(flowsheet, 'AddFlowsheetObject') else None),
-                # Try AddSimulationObject
-                ("AddSimulationObject('Pump', ...)", lambda: flowsheet.AddSimulationObject("Pump", "test-pump", 300, 100) if hasattr(flowsheet, 'AddSimulationObject') else None),
-                ("AddSimulationObject('Pump', ...) no coords", lambda: flowsheet.AddSimulationObject("Pump", "test-pump") if hasattr(flowsheet, 'AddSimulationObject') else None),
-                # Try AddGraphicObject
-                ("AddGraphicObject('Pump', ...)", lambda: flowsheet.AddGraphicObject("Pump", "test-pump", 300, 100) if hasattr(flowsheet, 'AddGraphicObject') else None),
-                ("AddGraphicObject('Pump', ...) no coords", lambda: flowsheet.AddGraphicObject("Pump", "test-pump") if hasattr(flowsheet, 'AddGraphicObject') else None),
-                # Try other alternatives
-                ("CreatePump", lambda: flowsheet.CreatePump("test-pump", 300, 100) if hasattr(flowsheet, 'CreatePump') else None),
-                ("AddPump", lambda: flowsheet.AddPump("test-pump", 300, 100) if hasattr(flowsheet, 'AddPump') else None),
-                ("NewPump", lambda: flowsheet.NewPump("test-pump", 300, 100) if hasattr(flowsheet, 'NewPump') else None),
-            ]
-            
-            for method_name, method in alt_methods:
-                try:
-                    unit = method()
-                    if unit is not None:
-                        logger.info(f"✓ {method_name} works")
-                        break
-                except Exception as e:
-                    logger.debug(f"✗ {method_name} failed: {e}")
+        unit_methods.extend([
+            ("CreatePump", lambda: flowsheet.CreatePump("test-pump", 300, 100) if hasattr(flowsheet, 'CreatePump') else None),
+            ("AddPump", lambda: flowsheet.AddPump("test-pump", 300, 100) if hasattr(flowsheet, 'AddPump') else None),
+            ("NewPump", lambda: flowsheet.NewPump("test-pump", 300, 100) if hasattr(flowsheet, 'NewPump') else None),
+        ])
+
+        unit = _try_methods(unit_methods)
         
         if unit:
             logger.info(f"  Unit type: {type(unit)}")
@@ -283,5 +335,3 @@ def test_dwsim_api():
 
 if __name__ == "__main__":
     test_dwsim_api()
-
-

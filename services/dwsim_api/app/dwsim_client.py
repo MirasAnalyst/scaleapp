@@ -23,6 +23,8 @@ class DWSIMClient:
     def __init__(self) -> None:
         self._rng = random.Random(42)
         self._automation = None
+        self._object_type_enum = None
+        self._object_type_cache = {}
         
         # Detect platform and set appropriate default path
         import platform
@@ -271,6 +273,67 @@ class DWSIMClient:
                 )
             self._automation = None
 
+    # ------------------------------------------------------------------
+    # DWSIM type helpers
+    # ------------------------------------------------------------------
+    def _resolve_object_type_enum(self):
+        """Locate DWSIM's ObjectType enum so AddObject can use the correct signature."""
+        if self._object_type_enum is not None:
+            return self._object_type_enum
+        
+        import importlib
+        candidates = [
+            ("DWSIM.Interfaces.Enums.GraphicObjects", ["ObjectType", "GraphicObjectType"]),
+            ("DWSIM.Interfaces.Enums", ["GraphicObjectType", "ObjectType"]),
+            ("DWSIM.Enums.GraphicObjects", ["ObjectType", "GraphicObjectType"]),
+        ]
+        for module_path, names in candidates:
+            try:
+                module = importlib.import_module(module_path)
+            except ImportError:
+                continue
+            for name in names:
+                enum_type = getattr(module, name, None)
+                if enum_type:
+                    self._object_type_enum = enum_type
+                    logger.debug("Using DWSIM ObjectType enum: %s.%s", module_path, name)
+                    return enum_type
+        
+        logger.debug("Could not locate DWSIM ObjectType enum; will rely on string-based AddObject calls")
+        self._object_type_enum = None
+        return None
+
+    def _get_object_type_value(self, object_name: str):
+        """Return the enum value for a DWSIM object type if available."""
+        if object_name in self._object_type_cache:
+            return self._object_type_cache[object_name]
+        
+        enum_type = self._resolve_object_type_enum()
+        if not enum_type:
+            self._object_type_cache[object_name] = None
+            return None
+        
+        variants = {
+            object_name,
+            object_name.replace(" ", ""),
+            object_name.replace("-", ""),
+            object_name.replace("_", ""),
+        }
+        for variant in variants:
+            if hasattr(enum_type, variant):
+                value = getattr(enum_type, variant)
+                self._object_type_cache[object_name] = value
+                return value
+            pascal = variant[:1].upper() + variant[1:]
+            if hasattr(enum_type, pascal):
+                value = getattr(enum_type, pascal)
+                self._object_type_cache[object_name] = value
+                return value
+        
+        self._object_type_cache[object_name] = None
+        logger.debug("No enum value found for object type '%s'", object_name)
+        return None
+
     def _run_dwsim(self, payload: schemas.FlowsheetPayload) -> schemas.SimulationResult:
         """Create and run a DWSIM flowsheet from JSON payload."""
         assert self._automation
@@ -481,6 +544,7 @@ class DWSIMClient:
     def _create_streams(self, flowsheet, streams: List[schemas.StreamSpec], warnings: List[str]) -> dict:
         """Create material streams in DWSIM."""
         stream_map = {}  # Maps stream.id -> DWSIM stream object
+        stream_enum = self._get_object_type_value("MaterialStream")
         
         for stream_spec in streams:
             stream_obj = None
@@ -489,66 +553,64 @@ class DWSIMClient:
             y = stream_spec.properties.get("y", 100) if stream_spec.properties else 100
             
             # Try multiple method signatures and approaches
-            # Based on test output, AddObject() doesn't work, but AddFlowsheetObject, AddSimulationObject, AddGraphicObject are available
-            # Use default arguments to avoid closure issues
-            def try_addflowsheetobject_1(sn=stream_name, x_coord=x, y_coord=y):
-                return flowsheet.AddFlowsheetObject("MaterialStream", sn, x_coord, y_coord) if hasattr(flowsheet, 'AddFlowsheetObject') else None
-            def try_addflowsheetobject_2(sn=stream_name):
-                return flowsheet.AddFlowsheetObject("MaterialStream", sn) if hasattr(flowsheet, 'AddFlowsheetObject') else None
-            def try_addsimulationobject_1(sn=stream_name, x_coord=x, y_coord=y):
-                return flowsheet.AddSimulationObject("MaterialStream", sn, x_coord, y_coord) if hasattr(flowsheet, 'AddSimulationObject') else None
-            def try_addsimulationobject_2(sn=stream_name):
-                return flowsheet.AddSimulationObject("MaterialStream", sn) if hasattr(flowsheet, 'AddSimulationObject') else None
-            def try_addgraphicobject_1(sn=stream_name, x_coord=x, y_coord=y):
-                return flowsheet.AddGraphicObject("MaterialStream", sn, x_coord, y_coord) if hasattr(flowsheet, 'AddGraphicObject') else None
-            def try_addgraphicobject_2(sn=stream_name):
-                return flowsheet.AddGraphicObject("MaterialStream", sn) if hasattr(flowsheet, 'AddGraphicObject') else None
-            def try_addobject_1(sn=stream_name, x_coord=x, y_coord=y):
-                return flowsheet.AddObject("MaterialStream", sn, x_coord, y_coord)
-            def try_addobject_2(sn=stream_name, x_coord=x, y_coord=y):
-                return flowsheet.AddObject("MaterialStream", sn, float(x_coord), float(y_coord))
-            def try_addobject_3(sn=stream_name):
-                return flowsheet.AddObject("MaterialStream", sn)
-            def try_creatematerialstream(sn=stream_name, x_coord=x, y_coord=y):
-                return flowsheet.CreateMaterialStream(sn, x_coord, y_coord) if hasattr(flowsheet, 'CreateMaterialStream') else None
-            def try_addmaterialstream(sn=stream_name, x_coord=x, y_coord=y):
-                return flowsheet.AddMaterialStream(sn, x_coord, y_coord) if hasattr(flowsheet, 'AddMaterialStream') else None
-            def try_newmaterialstream(sn=stream_name, x_coord=x, y_coord=y):
-                return flowsheet.NewMaterialStream(sn, x_coord, y_coord) if hasattr(flowsheet, 'NewMaterialStream') else None
+            method_attempts = []
+            if stream_enum is not None:
+                method_attempts.extend([
+                    ("AddObject(enum, coords)", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddObject(stream_enum, sn, float(x_coord), float(y_coord))),
+                    ("AddObject(enum)", lambda sn=stream_name: flowsheet.AddObject(stream_enum, sn)),
+                ])
+                if hasattr(flowsheet, 'AddFlowsheetObject'):
+                    method_attempts.extend([
+                        ("AddFlowsheetObject(enum, coords)", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddFlowsheetObject(stream_enum, sn, float(x_coord), float(y_coord))),
+                        ("AddFlowsheetObject(enum)", lambda sn=stream_name: flowsheet.AddFlowsheetObject(stream_enum, sn)),
+                    ])
+                if hasattr(flowsheet, 'AddSimulationObject'):
+                    method_attempts.extend([
+                        ("AddSimulationObject(enum, coords)", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddSimulationObject(stream_enum, sn, float(x_coord), float(y_coord))),
+                        ("AddSimulationObject(enum)", lambda sn=stream_name: flowsheet.AddSimulationObject(stream_enum, sn)),
+                    ])
             
-            create_methods = [
-                # Try AddFlowsheetObject first (most likely based on available methods)
-                try_addflowsheetobject_1,
-                try_addflowsheetobject_2,
-                # Try AddSimulationObject
-                try_addsimulationobject_1,
-                try_addsimulationobject_2,
-                # Try AddGraphicObject
-                try_addgraphicobject_1,
-                try_addgraphicobject_2,
-                # Fallback to AddObject (may work in some DWSIM versions)
-                try_addobject_1,
-                try_addobject_2,
-                try_addobject_3,
-                # Try other alternatives
-                try_creatematerialstream,
-                try_addmaterialstream,
-                try_newmaterialstream,
-                lambda: self._create_stream_via_collection(flowsheet, stream_name, x, y),
-            ]
+            for type_name in ["MaterialStream", "Material Stream"]:
+                if hasattr(flowsheet, 'AddFlowsheetObject'):
+                    method_attempts.extend([
+                        (f"AddFlowsheetObject('{type_name}', coords)", lambda tn=type_name, sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddFlowsheetObject(tn, sn, x_coord, y_coord)),
+                        (f"AddFlowsheetObject('{type_name}')", lambda tn=type_name, sn=stream_name: flowsheet.AddFlowsheetObject(tn, sn)),
+                    ])
+                if hasattr(flowsheet, 'AddSimulationObject'):
+                    method_attempts.extend([
+                        (f"AddSimulationObject('{type_name}', coords)", lambda tn=type_name, sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddSimulationObject(tn, sn, x_coord, y_coord)),
+                        (f"AddSimulationObject('{type_name}')", lambda tn=type_name, sn=stream_name: flowsheet.AddSimulationObject(tn, sn)),
+                    ])
+                if hasattr(flowsheet, 'AddGraphicObject'):
+                    method_attempts.extend([
+                        (f"AddGraphicObject('{type_name}', coords)", lambda tn=type_name, sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddGraphicObject(tn, sn, x_coord, y_coord)),
+                        (f"AddGraphicObject('{type_name}')", lambda tn=type_name, sn=stream_name: flowsheet.AddGraphicObject(tn, sn)),
+                    ])
+                method_attempts.extend([
+                    (f"AddObject('{type_name}', coords)", lambda tn=type_name, sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddObject(tn, sn, x_coord, y_coord)),
+                    (f"AddObject('{type_name}')", lambda tn=type_name, sn=stream_name: flowsheet.AddObject(tn, sn)),
+                ])
+
+            method_attempts.extend([
+                ("CreateMaterialStream", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.CreateMaterialStream(sn, x_coord, y_coord) if hasattr(flowsheet, 'CreateMaterialStream') else None),
+                ("AddMaterialStream", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddMaterialStream(sn, x_coord, y_coord) if hasattr(flowsheet, 'AddMaterialStream') else None),
+                ("NewMaterialStream", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.NewMaterialStream(sn, x_coord, y_coord) if hasattr(flowsheet, 'NewMaterialStream') else None),
+                ("MaterialStreams collection fallback", lambda: self._create_stream_via_collection(flowsheet, stream_name, x, y)),
+            ])
             
-            for method in create_methods:
+            for desc, method in method_attempts:
                 try:
                     result = method()
                     if result is not None:
                         stream_obj = result
-                        logger.debug("Created stream '%s'", stream_name)
+                        logger.debug("Created stream '%s' via %s", stream_name, desc)
                         break
+                    logger.debug("Stream creation method %s returned None", desc)
                 except (TypeError, AttributeError) as e:
-                    logger.debug("Stream creation method failed: %s", e)
+                    logger.debug("Stream creation method %s failed: %s", desc, e)
                     continue
                 except Exception as e:
-                    logger.debug("Stream creation failed with error: %s", e)
+                    logger.debug("Stream creation %s failed with error: %s", desc, e)
                     continue
             
             if stream_obj is None:
@@ -670,60 +732,61 @@ class DWSIMClient:
             x = params.get("x", 200)
             y = params.get("y", 200)
             
+            unit_enum = self._get_object_type_value(dwsim_type)
+            
             # Try multiple method signatures and approaches
-            # Based on test output, AddObject() doesn't work, but AddFlowsheetObject, AddSimulationObject, AddGraphicObject are available
-            # Use default arguments to avoid closure issues
-            def try_addflowsheetobject_unit_1(ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y):
-                return flowsheet.AddFlowsheetObject(ut, uid, x_coord, y_coord) if hasattr(flowsheet, 'AddFlowsheetObject') else None
-            def try_addflowsheetobject_unit_2(ut=dwsim_type, uid=unit_spec.id):
-                return flowsheet.AddFlowsheetObject(ut, uid) if hasattr(flowsheet, 'AddFlowsheetObject') else None
-            def try_addsimulationobject_unit_1(ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y):
-                return flowsheet.AddSimulationObject(ut, uid, x_coord, y_coord) if hasattr(flowsheet, 'AddSimulationObject') else None
-            def try_addsimulationobject_unit_2(ut=dwsim_type, uid=unit_spec.id):
-                return flowsheet.AddSimulationObject(ut, uid) if hasattr(flowsheet, 'AddSimulationObject') else None
-            def try_addgraphicobject_unit_1(ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y):
-                return flowsheet.AddGraphicObject(ut, uid, x_coord, y_coord) if hasattr(flowsheet, 'AddGraphicObject') else None
-            def try_addgraphicobject_unit_2(ut=dwsim_type, uid=unit_spec.id):
-                return flowsheet.AddGraphicObject(ut, uid) if hasattr(flowsheet, 'AddGraphicObject') else None
-            def try_addobject_unit_1(ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y):
-                return flowsheet.AddObject(ut, uid, x_coord, y_coord)
-            def try_addobject_unit_2(ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y):
-                return flowsheet.AddObject(ut, uid, float(x_coord), float(y_coord))
-            def try_addobject_unit_3(ut=dwsim_type, uid=unit_spec.id):
-                return flowsheet.AddObject(ut, uid)
+            method_attempts = []
+            if unit_enum is not None:
+                method_attempts.extend([
+                    ("AddObject(enum, coords)", lambda ut=unit_enum, uid=unit_spec.id, x_coord=x, y_coord=y: flowsheet.AddObject(ut, uid, float(x_coord), float(y_coord))),
+                    ("AddObject(enum)", lambda ut=unit_enum, uid=unit_spec.id: flowsheet.AddObject(ut, uid)),
+                ])
+                if hasattr(flowsheet, 'AddFlowsheetObject'):
+                    method_attempts.extend([
+                        ("AddFlowsheetObject(enum, coords)", lambda ut=unit_enum, uid=unit_spec.id, x_coord=x, y_coord=y: flowsheet.AddFlowsheetObject(ut, uid, float(x_coord), float(y_coord))),
+                        ("AddFlowsheetObject(enum)", lambda ut=unit_enum, uid=unit_spec.id: flowsheet.AddFlowsheetObject(ut, uid)),
+                    ])
+                if hasattr(flowsheet, 'AddSimulationObject'):
+                    method_attempts.extend([
+                        ("AddSimulationObject(enum, coords)", lambda ut=unit_enum, uid=unit_spec.id, x_coord=x, y_coord=y: flowsheet.AddSimulationObject(ut, uid, float(x_coord), float(y_coord))),
+                        ("AddSimulationObject(enum)", lambda ut=unit_enum, uid=unit_spec.id: flowsheet.AddSimulationObject(ut, uid)),
+                    ])
             
-            create_methods = [
-                # Try AddFlowsheetObject first (most likely based on available methods)
-                try_addflowsheetobject_unit_1,
-                try_addflowsheetobject_unit_2,
-                # Try AddSimulationObject
-                try_addsimulationobject_unit_1,
-                try_addsimulationobject_unit_2,
-                # Try AddGraphicObject
-                try_addgraphicobject_unit_1,
-                try_addgraphicobject_unit_2,
-                # Fallback to AddObject (may work in some DWSIM versions)
-                try_addobject_unit_1,
-                try_addobject_unit_2,
-                try_addobject_unit_3,
-                # Try type-specific methods
-                lambda: self._create_unit_via_method(flowsheet, dwsim_type, unit_spec.id, x, y),
-                # Try collection-based creation
-                lambda: self._create_unit_via_collection(flowsheet, dwsim_type, unit_spec.id, x, y),
-            ]
+            if hasattr(flowsheet, 'AddFlowsheetObject'):
+                method_attempts.extend([
+                    ("AddFlowsheetObject(str, coords)", lambda ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y: flowsheet.AddFlowsheetObject(ut, uid, x_coord, y_coord)),
+                    ("AddFlowsheetObject(str)", lambda ut=dwsim_type, uid=unit_spec.id: flowsheet.AddFlowsheetObject(ut, uid)),
+                ])
+            if hasattr(flowsheet, 'AddSimulationObject'):
+                method_attempts.extend([
+                    ("AddSimulationObject(str, coords)", lambda ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y: flowsheet.AddSimulationObject(ut, uid, x_coord, y_coord)),
+                    ("AddSimulationObject(str)", lambda ut=dwsim_type, uid=unit_spec.id: flowsheet.AddSimulationObject(ut, uid)),
+                ])
+            if hasattr(flowsheet, 'AddGraphicObject'):
+                method_attempts.extend([
+                    ("AddGraphicObject(str, coords)", lambda ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y: flowsheet.AddGraphicObject(ut, uid, x_coord, y_coord)),
+                    ("AddGraphicObject(str)", lambda ut=dwsim_type, uid=unit_spec.id: flowsheet.AddGraphicObject(ut, uid)),
+                ])
+            method_attempts.extend([
+                ("AddObject(str, coords)", lambda ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y: flowsheet.AddObject(ut, uid, x_coord, y_coord)),
+                ("AddObject(str)", lambda ut=dwsim_type, uid=unit_spec.id: flowsheet.AddObject(ut, uid)),
+                ("Type-specific method", lambda: self._create_unit_via_method(flowsheet, dwsim_type, unit_spec.id, x, y)),
+                ("Collection-based creation", lambda: self._create_unit_via_collection(flowsheet, dwsim_type, unit_spec.id, x, y)),
+            ])
             
-            for method in create_methods:
+            for desc, method in method_attempts:
                 try:
                     result = method()
                     if result is not None:
                         unit_obj = result
-                        logger.debug("Created unit '%s' (type: %s)", unit_spec.id, dwsim_type)
+                        logger.debug("Created unit '%s' (type: %s) via %s", unit_spec.id, dwsim_type, desc)
                         break
+                    logger.debug("Unit creation method %s returned None for '%s'", desc, unit_spec.id)
                 except (TypeError, AttributeError) as e:
-                    logger.debug("Unit creation method failed for '%s': %s", unit_spec.id, e)
+                    logger.debug("Unit creation method %s failed for '%s': %s", desc, unit_spec.id, e)
                     continue
                 except Exception as e:
-                    logger.debug("Unit creation failed for '%s' with error: %s", unit_spec.id, e)
+                    logger.debug("Unit creation %s failed for '%s' with error: %s", desc, unit_spec.id, e)
                     continue
             
             if unit_obj is None:
