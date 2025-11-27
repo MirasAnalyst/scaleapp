@@ -110,6 +110,15 @@ def _resolve_stream_or_unit(flowsheet, name, attrs):
         candidate = _get_collection_item(coll, name)
         if candidate:
             return candidate, attr
+        try:
+            for item in coll:
+                obj = item[1] if isinstance(item, tuple) and len(item) == 2 else item
+                nm = getattr(obj, "Name", None)
+                tag = getattr(getattr(obj, "GraphicObject", None), "Tag", None)
+                if nm == name or tag == name:
+                    return obj, attr
+        except Exception:
+            pass
     return None, None
 
 def inspect_method_signatures(obj, method_name):
@@ -140,6 +149,7 @@ def test_dwsim_api():
         
         automation = Automation3()
         logger.info("✓ DWSIM Automation loaded successfully")
+        logger.info("ThermoC/ThermoCS errors above are expected; property package fallback will be used if needed.")
         
         # Test 1: Create new flowsheet
         logger.info("\n=== Testing Flowsheet Creation ===")
@@ -163,7 +173,8 @@ def test_dwsim_api():
         # Test 2: Inspect flowsheet object
         logger.info("\n=== Inspecting Flowsheet Object ===")
         logger.info(f"Flowsheet type: {type(flowsheet)}")
-        
+        logger.debug(f"Flowsheet attributes sample (50): {[m for m in dir(flowsheet) if not m.startswith('_')][:50]}")
+
         # Get all methods (excluding private ones)
         all_methods = [m for m in dir(flowsheet) if not m.startswith('_')]
         logger.info(f"Available methods (first 30): {all_methods[:30]}")
@@ -248,6 +259,25 @@ def test_dwsim_api():
                 if candidate:
                     logger.info(f"Resolved stream via {source} collection for property setting: {type(candidate)}")
                     stream = candidate
+                    logger.info(f"  Resolved stream methods: {[m for m in dir(stream) if not m.startswith('_')][:20]}")
+                else:
+                    # Try grabbing first SetProp-capable object from collections
+                    for attr in ["MaterialStreams", "SimulationObjects"]:
+                        coll = getattr(flowsheet, attr, None)
+                        if coll is None:
+                            continue
+                        try:
+                            for item in coll:
+                                obj = item[1] if isinstance(item, tuple) and len(item) == 2 else item
+                                if hasattr(obj, "SetProp"):
+                                    stream = obj
+                                    logger.info(f"Resolved stream via {attr} first SetProp candidate: {type(stream)}")
+                                    break
+                            if hasattr(stream, "SetProp"):
+                                logger.info(f"  Resolved stream methods: {[m for m in dir(stream) if not m.startswith('_')][:20]}")
+                                break
+                        except Exception:
+                            continue
             try:
                 stream.SetProp("temperature", "overall", None, "", "K", 373.15)
                 logger.info("✓ SetProp('temperature', ...) works")

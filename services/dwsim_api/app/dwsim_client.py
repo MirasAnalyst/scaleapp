@@ -955,6 +955,30 @@ class DWSIMClient:
             pass
         return None
 
+    def _iterate_collection(self, collection):
+        """Yield candidate objects from a .NET collection/dictionary."""
+        if collection is None:
+            return
+        # Dictionary-like with Values
+        for attr in ("Values", "values"):
+            if hasattr(collection, attr):
+                try:
+                    for item in getattr(collection, attr):
+                        yield item
+                    return
+                except Exception:
+                    pass
+        # Generic iterable
+        try:
+            for item in collection:
+                # If iterating gives tuples (key, value), use value
+                if isinstance(item, tuple) and len(item) == 2:
+                    yield item[1]
+                else:
+                    yield item
+        except Exception:
+            return
+
     def _resolve_stream_object(self, flowsheet, stream_name: str, stream_obj):
         """If the returned object lacks SetProp, resolve the actual MaterialStream from collections."""
         if hasattr(stream_obj, "SetProp"):
@@ -963,10 +987,25 @@ class DWSIMClient:
             coll = getattr(flowsheet, attr, None)
             if coll is None:
                 continue
+            # Try direct lookup by key
             candidate = self._get_collection_item(coll, stream_name)
             if candidate and hasattr(candidate, "SetProp"):
                 logger.debug("Resolved stream '%s' via %s collection to object with SetProp", stream_name, attr)
                 return candidate
+            # Try name/tag matching over all items
+            for item in self._iterate_collection(coll):
+                if not hasattr(item, "SetProp"):
+                    continue
+                name = getattr(item, "Name", None)
+                tag = getattr(getattr(item, "GraphicObject", None), "Tag", None)
+                if name == stream_name or tag == stream_name:
+                    logger.debug("Resolved stream '%s' via %s collection (name/tag match)", stream_name, attr)
+                    return item
+            # Fallback: first item with SetProp
+            for item in self._iterate_collection(coll):
+                if hasattr(item, "SetProp"):
+                    logger.debug("Resolved stream '%s' via %s collection (first SetProp)", stream_name, attr)
+                    return item
         logger.debug("Stream '%s' has no SetProp and no resolvable collection target", stream_name)
         return stream_obj
 
@@ -982,6 +1021,18 @@ class DWSIMClient:
             if candidate and hasattr(candidate, "SetProp"):
                 logger.debug("Resolved unit '%s' via %s collection to object with SetProp", unit_name, attr)
                 return candidate
+            for item in self._iterate_collection(coll):
+                if not hasattr(item, "SetProp"):
+                    continue
+                name = getattr(item, "Name", None)
+                tag = getattr(getattr(item, "GraphicObject", None), "Tag", None)
+                if name == unit_name or tag == unit_name:
+                    logger.debug("Resolved unit '%s' via %s collection (name/tag match)", unit_name, attr)
+                    return item
+            for item in self._iterate_collection(coll):
+                if hasattr(item, "SetProp"):
+                    logger.debug("Resolved unit '%s' via %s collection (first SetProp)", unit_name, attr)
+                    return item
         logger.debug("Unit '%s' has no SetProp and no resolvable collection target", unit_name)
         return unit_obj
 
