@@ -615,31 +615,31 @@ class DWSIMClient:
                     logger.debug("Stream creation %s failed with error: %s", desc, e)
                     continue
             
-        if stream_obj is None:
-            logger.warning("Failed to create stream '%s' - all methods failed", stream_name)
-            warnings.append(f"Failed to create stream '{stream_name}' - DWSIM API method signature issue.")
-            continue
-        
-        try:
-            # If the object we got lacks SetProp, try to resolve the real MaterialStream from collections
-            stream_obj = self._resolve_stream_object(flowsheet, stream_name, stream_obj)
-            stream_map[stream_spec.id] = stream_obj
+            if stream_obj is None:
+                logger.warning("Failed to create stream '%s' - all methods failed", stream_name)
+                warnings.append(f"Failed to create stream '{stream_name}' - DWSIM API method signature issue.")
+                continue
             
-            # Set stream properties
-            props = stream_spec.properties or {}
-            
-            # Temperature (convert C to K if needed)
-            temp = props.get("temperature")
-            if temp is not None:
-                if not self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "K", temp + 273.15):
-                    if not self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "C", temp):
-                        warnings.append(f"Stream {stream_spec.id}: Could not set temperature")
-        
-            # Pressure (in kPa)
-            pressure = props.get("pressure")
-            if pressure is not None:
-                if not self._set_stream_prop(stream_obj, "pressure", "overall", None, "", "kPa", pressure):
-                    warnings.append(f"Stream {stream_spec.id}: Could not set pressure")
+            try:
+                # If the object we got lacks SetProp, try to resolve the real MaterialStream from collections
+                stream_obj = self._resolve_stream_object(flowsheet, stream_name, stream_obj)
+                stream_map[stream_spec.id] = stream_obj
+                
+                # Set stream properties
+                props = stream_spec.properties or {}
+                
+                # Temperature (convert C to K if needed)
+                temp = props.get("temperature")
+                if temp is not None:
+                    if not self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "K", temp + 273.15):
+                        if not self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "C", temp):
+                            warnings.append(f"Stream {stream_spec.id}: Could not set temperature")
+                
+                # Pressure (in kPa)
+                pressure = props.get("pressure")
+                if pressure is not None:
+                    if not self._set_stream_prop(stream_obj, "pressure", "overall", None, "", "kPa", pressure):
+                        warnings.append(f"Stream {stream_spec.id}: Could not set pressure")
                 
                 # Mass flow (convert kg/h to kg/s)
                 flow = props.get("flow_rate") or props.get("mass_flow")
