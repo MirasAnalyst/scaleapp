@@ -615,31 +615,31 @@ class DWSIMClient:
                     logger.debug("Stream creation %s failed with error: %s", desc, e)
                     continue
             
-            if stream_obj is None:
-                logger.warning("Failed to create stream '%s' - all methods failed", stream_name)
-                warnings.append(f"Failed to create stream '{stream_name}' - DWSIM API method signature issue.")
-                continue
+        if stream_obj is None:
+            logger.warning("Failed to create stream '%s' - all methods failed", stream_name)
+            warnings.append(f"Failed to create stream '{stream_name}' - DWSIM API method signature issue.")
+            continue
+        
+        try:
+            # If the object we got lacks SetProp, try to resolve the real MaterialStream from collections
+            stream_obj = self._resolve_stream_object(flowsheet, stream_name, stream_obj)
+            stream_map[stream_spec.id] = stream_obj
             
-            try:
-                # If the object we got lacks SetProp, try to resolve the real MaterialStream from collections
-                stream_obj = self._resolve_stream_object(flowsheet, stream_name, stream_obj)
-                stream_map[stream_spec.id] = stream_obj
-                
-                # Set stream properties
-                props = stream_spec.properties or {}
-                
-                # Temperature (convert C to K if needed)
-                temp = props.get("temperature")
-                if temp is not None:
-                    if not self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "K", temp + 273.15):
-                        if not self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "C", temp):
-                            warnings.append(f"Stream {stream_spec.id}: Could not set temperature")
-                
-                # Pressure (in kPa)
-                pressure = props.get("pressure")
-                if pressure is not None:
-                    if not self._set_stream_prop(stream_obj, "pressure", "overall", None, "", "kPa", pressure):
-                        warnings.append(f"Stream {stream_spec.id}: Could not set pressure")
+            # Set stream properties
+            props = stream_spec.properties or {}
+            
+            # Temperature (convert C to K if needed)
+            temp = props.get("temperature")
+            if temp is not None:
+                if not self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "K", temp + 273.15):
+                    if not self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "C", temp):
+                        warnings.append(f"Stream {stream_spec.id}: Could not set temperature")
+        
+            # Pressure (in kPa)
+            pressure = props.get("pressure")
+            if pressure is not None:
+                if not self._set_stream_prop(stream_obj, "pressure", "overall", None, "", "kPa", pressure):
+                    warnings.append(f"Stream {stream_spec.id}: Could not set pressure")
                 
                 # Mass flow (convert kg/h to kg/s)
                 flow = props.get("flow_rate") or props.get("mass_flow")
@@ -966,6 +966,8 @@ class DWSIMClient:
             setters.append(lambda: stream_obj.SetProp(prop_name, phase, comp, basis, unit, value))
         if hasattr(stream_obj, "SetPropertyValue"):
             setters.append(lambda: stream_obj.SetPropertyValue(prop_name, value))
+        if hasattr(stream_obj, "SetPropertyValue2"):
+            setters.append(lambda: stream_obj.SetPropertyValue2(prop_name, value))
         # Common direct attributes as fallbacks
         for attr in ["Temperature", "Pressure", "MassFlow", "MolarFlow", "TotalFlow"]:
             if attr.lower().startswith(prop_name.replace(" ", "").lower()) and hasattr(stream_obj, attr):
@@ -980,7 +982,7 @@ class DWSIMClient:
 
     def _resolve_stream_object(self, flowsheet, stream_name: str, stream_obj):
         """If the returned object lacks SetProp, resolve the actual MaterialStream from collections."""
-        if hasattr(stream_obj, "SetProp"):
+        if hasattr(stream_obj, "SetProp") or hasattr(stream_obj, "SetPropertyValue") or hasattr(stream_obj, "SetPropertyValue2"):
             return stream_obj
         for attr in ["MaterialStreams", "SimulationObjects"]:
             coll = getattr(flowsheet, attr, None)
@@ -1021,11 +1023,11 @@ class DWSIMClient:
             if coll is None:
                 continue
             candidate = self._get_collection_item(coll, unit_name)
-            if candidate and hasattr(candidate, "SetProp"):
+            if candidate and (hasattr(candidate, "SetProp") or hasattr(candidate, "SetPropertyValue") or hasattr(candidate, "SetPropertyValue2")):
                 logger.debug("Resolved unit '%s' via %s collection to object with SetProp", unit_name, attr)
                 return candidate
             for item in self._iterate_collection(coll):
-                if not hasattr(item, "SetProp"):
+                if not (hasattr(item, "SetProp") or hasattr(item, "SetPropertyValue") or hasattr(item, "SetPropertyValue2")):
                     continue
                 name = getattr(item, "Name", None)
                 tag = getattr(getattr(item, "GraphicObject", None), "Tag", None)
@@ -1033,7 +1035,7 @@ class DWSIMClient:
                     logger.debug("Resolved unit '%s' via %s collection (name/tag match)", unit_name, attr)
                     return item
             for item in self._iterate_collection(coll):
-                if hasattr(item, "SetProp"):
+                if hasattr(item, "SetProp") or hasattr(item, "SetPropertyValue") or hasattr(item, "SetPropertyValue2"):
                     logger.debug("Resolved unit '%s' via %s collection (first SetProp)", unit_name, attr)
                     return item
             # Fallback: first item whose type name contains the requested type

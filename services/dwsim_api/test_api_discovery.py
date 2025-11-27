@@ -257,7 +257,7 @@ def test_dwsim_api():
         if stream:
             logger.info("\n=== Testing Stream Property Setting ===")
             # Resolve real stream object if the current one lacks SetProp
-            if not hasattr(stream, "SetProp"):
+            if not hasattr(stream, "SetProp") and not hasattr(stream, "SetPropertyValue") and not hasattr(stream, "SetPropertyValue2"):
                 candidate, source = _resolve_stream_or_unit(flowsheet, "test-stream", ["MaterialStreams", "SimulationObjects"])
                 if candidate:
                     logger.info(f"Resolved stream via {source} collection for property setting: {type(candidate)}")
@@ -274,11 +274,11 @@ def test_dwsim_api():
                                 obj = item[1] if isinstance(item, tuple) and len(item) == 2 else item
                                 if hasattr(obj, "Value"):
                                     obj = obj.Value
-                                if hasattr(obj, "SetProp"):
+                                if hasattr(obj, "SetProp") or hasattr(obj, "SetPropertyValue") or hasattr(obj, "SetPropertyValue2"):
                                     stream = obj
                                     logger.info(f"Resolved stream via {attr} first SetProp candidate: {type(stream)}")
                                     break
-                            if hasattr(stream, "SetProp"):
+                            if hasattr(stream, "SetProp") or hasattr(stream, "SetPropertyValue") or hasattr(stream, "SetPropertyValue2"):
                                 logger.info(f"  Resolved stream methods: {[m for m in dir(stream) if not m.startswith('_')][:40]}")
                                 break
                         except Exception:
@@ -304,10 +304,19 @@ def test_dwsim_api():
                             except Exception as e:
                                 logger.debug(f"Could not iterate {attr}: {e}")
             try:
-                stream.SetProp("temperature", "overall", None, "", "K", 373.15)
-                logger.info("✓ SetProp('temperature', ...) works")
+                if hasattr(stream, "SetProp"):
+                    stream.SetProp("temperature", "overall", None, "", "K", 373.15)
+                    logger.info("✓ SetProp('temperature', ...) works")
+                elif hasattr(stream, "SetPropertyValue"):
+                    stream.SetPropertyValue("temperature", 373.15)
+                    logger.info("✓ SetPropertyValue('temperature', ...) works")
+                elif hasattr(stream, "SetPropertyValue2"):
+                    stream.SetPropertyValue2("temperature", 373.15)
+                    logger.info("✓ SetPropertyValue2('temperature', ...) works")
+                else:
+                    logger.warning("✗ No setter found on resolved stream")
             except Exception as e:
-                logger.warning(f"✗ SetProp() failed: {e}")
+                logger.warning(f"✗ SetProp/SetPropertyValue failed: {e}")
         
         # Test 7: Create unit operation - try multiple signatures
         logger.info("\n=== Testing Unit Operation Creation ===")
