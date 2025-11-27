@@ -259,7 +259,7 @@ def test_dwsim_api():
                 if candidate:
                     logger.info(f"Resolved stream via {source} collection for property setting: {type(candidate)}")
                     stream = candidate
-                    logger.info(f"  Resolved stream methods: {[m for m in dir(stream) if not m.startswith('_')][:20]}")
+                    logger.info(f"  Resolved stream methods: {[m for m in dir(stream) if not m.startswith('_')][:40]}")
                 else:
                     # Try grabbing first SetProp-capable object from collections
                     for attr in ["MaterialStreams", "SimulationObjects"]:
@@ -274,10 +274,22 @@ def test_dwsim_api():
                                     logger.info(f"Resolved stream via {attr} first SetProp candidate: {type(stream)}")
                                     break
                             if hasattr(stream, "SetProp"):
-                                logger.info(f"  Resolved stream methods: {[m for m in dir(stream) if not m.startswith('_')][:20]}")
+                                logger.info(f"  Resolved stream methods: {[m for m in dir(stream) if not m.startswith('_')][:40]}")
                                 break
                         except Exception:
                             continue
+                    else:
+                        # Log all simulation objects for debugging
+                        for attr in ["MaterialStreams", "SimulationObjects"]:
+                            coll = getattr(flowsheet, attr, None)
+                            if coll is None:
+                                continue
+                            try:
+                                for idx, item in enumerate(coll):
+                                    obj = item[1] if isinstance(item, tuple) and len(item) == 2 else item
+                                    logger.info(f"{attr}[{idx}] type={type(obj)} methods={ [m for m in dir(obj) if not m.startswith('_')][:40] }")
+                            except Exception as e:
+                                logger.debug(f"Could not iterate {attr}: {e}")
             try:
                 stream.SetProp("temperature", "overall", None, "", "K", 373.15)
                 logger.info("✓ SetProp('temperature', ...) works")

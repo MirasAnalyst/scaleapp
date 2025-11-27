@@ -631,41 +631,22 @@ class DWSIMClient:
                 # Temperature (convert C to K if needed)
                 temp = props.get("temperature")
                 if temp is not None:
-                    if hasattr(stream_obj, "SetProp"):
-                        try:
-                            stream_obj.SetProp("temperature", "overall", None, "", "K", temp + 273.15)
-                        except Exception:
-                            try:
-                                stream_obj.SetProp("temperature", "overall", None, "", "C", temp)
-                            except Exception as e:
-                                warnings.append(f"Stream {stream_spec.id}: Could not set temperature: {e}")
-                    else:
-                        warnings.append(f"Stream {stream_spec.id}: SetProp not available on stream object; using defaults")
+                    if not self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "K", temp + 273.15):
+                        if not self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "C", temp):
+                            warnings.append(f"Stream {stream_spec.id}: Could not set temperature")
                 
                 # Pressure (in kPa)
                 pressure = props.get("pressure")
                 if pressure is not None:
-                    if hasattr(stream_obj, "SetProp"):
-                        try:
-                            stream_obj.SetProp("pressure", "overall", None, "", "kPa", pressure)
-                        except Exception as e:
-                            warnings.append(f"Stream {stream_spec.id}: Could not set pressure: {e}")
-                    else:
-                        warnings.append(f"Stream {stream_spec.id}: SetProp not available on stream object; using defaults")
+                    if not self._set_stream_prop(stream_obj, "pressure", "overall", None, "", "kPa", pressure):
+                        warnings.append(f"Stream {stream_spec.id}: Could not set pressure")
                 
                 # Mass flow (convert kg/h to kg/s)
                 flow = props.get("flow_rate") or props.get("mass_flow")
                 if flow is not None:
-                    if hasattr(stream_obj, "SetProp"):
-                        try:
-                            stream_obj.SetProp("totalflow", "overall", None, "", "kg/s", flow / 3600.0)
-                        except Exception:
-                            try:
-                                stream_obj.SetProp("totalflow", "overall", None, "", "kg/h", flow)
-                            except Exception as e:
-                                warnings.append(f"Stream {stream_spec.id}: Could not set flow rate: {e}")
-                    else:
-                        warnings.append(f"Stream {stream_spec.id}: SetProp not available on stream object; using defaults")
+                    if not self._set_stream_prop(stream_obj, "totalflow", "overall", None, "", "kg/s", flow / 3600.0):
+                        if not self._set_stream_prop(stream_obj, "totalflow", "overall", None, "", "kg/h", flow):
+                            warnings.append(f"Stream {stream_spec.id}: Could not set flow rate")
                 
                 # Composition (mole fractions)
                 composition = props.get("composition", {})
@@ -673,24 +654,14 @@ class DWSIMClient:
                     total = sum(composition.values())
                     if total > 0:
                         for comp, frac in composition.items():
-                            if hasattr(stream_obj, "SetProp"):
-                                try:
-                                    # Normalize and set mole fraction
-                                    normalized_frac = frac / total
-                                    stream_obj.SetProp("molefraction", "overall", comp, "", "", normalized_frac)
-                                except Exception as e:
-                                    warnings.append(f"Stream {stream_spec.id}: Could not set composition for {comp}: {e}")
-                            else:
-                                warnings.append(f"Stream {stream_spec.id}: SetProp not available; skipping composition for {comp}")
+                            normalized_frac = frac / total
+                            if not self._set_stream_prop(stream_obj, "molefraction", "overall", comp, "", "", normalized_frac):
+                                warnings.append(f"Stream {stream_spec.id}: Could not set composition for {comp}")
                 
                 # Vapor fraction
                 vapor_frac = props.get("vapor_fraction")
                 if vapor_frac is not None:
-                    if hasattr(stream_obj, "SetProp"):
-                        try:
-                            stream_obj.SetProp("vaporfraction", "overall", None, "", "", vapor_frac)
-                        except Exception:
-                            pass  # Optional property
+                    self._set_stream_prop(stream_obj, "vaporfraction", "overall", None, "", "", vapor_frac)
                 
                 logger.debug("Created stream: %s", stream_spec.id)
             except Exception as exc:
@@ -979,6 +950,25 @@ class DWSIMClient:
         except Exception:
             return
 
+    def _set_stream_prop(self, stream_obj, prop_name, phase, comp, basis, unit, value) -> bool:
+        """Attempt to set a property on a stream object using multiple APIs."""
+        setters = []
+        if hasattr(stream_obj, "SetProp"):
+            setters.append(lambda: stream_obj.SetProp(prop_name, phase, comp, basis, unit, value))
+        if hasattr(stream_obj, "SetPropertyValue"):
+            setters.append(lambda: stream_obj.SetPropertyValue(prop_name, value))
+        # Common direct attributes as fallbacks
+        for attr in ["Temperature", "Pressure", "MassFlow", "MolarFlow", "TotalFlow"]:
+            if attr.lower().startswith(prop_name.replace(" ", "").lower()) and hasattr(stream_obj, attr):
+                setters.append(lambda a=attr: setattr(stream_obj, a, value))
+        for setter in setters:
+            try:
+                setter()
+                return True
+            except Exception:
+                continue
+        return False
+
     def _resolve_stream_object(self, flowsheet, stream_name: str, stream_obj):
         """If the returned object lacks SetProp, resolve the actual MaterialStream from collections."""
         if hasattr(stream_obj, "SetProp"):
@@ -994,17 +984,21 @@ class DWSIMClient:
                 return candidate
             # Try name/tag matching over all items
             for item in self._iterate_collection(coll):
-                if not hasattr(item, "SetProp"):
-                    continue
                 name = getattr(item, "Name", None)
                 tag = getattr(getattr(item, "GraphicObject", None), "Tag", None)
                 if name == stream_name or tag == stream_name:
-                    logger.debug("Resolved stream '%s' via %s collection (name/tag match)", stream_name, attr)
-                    return item
+                    if hasattr(item, "SetProp") or "stream" in str(type(item)).lower():
+                        logger.debug("Resolved stream '%s' via %s collection (name/tag match)", stream_name, attr)
+                        return item
             # Fallback: first item with SetProp
             for item in self._iterate_collection(coll):
                 if hasattr(item, "SetProp"):
                     logger.debug("Resolved stream '%s' via %s collection (first SetProp)", stream_name, attr)
+                    return item
+            # Fallback: first item whose type looks like a stream
+            for item in self._iterate_collection(coll):
+                if "stream" in str(type(item)).lower():
+                    logger.debug("Resolved stream '%s' via %s collection (type contains 'stream')", stream_name, attr)
                     return item
         logger.debug("Stream '%s' has no SetProp and no resolvable collection target", stream_name)
         return stream_obj
@@ -1032,6 +1026,11 @@ class DWSIMClient:
             for item in self._iterate_collection(coll):
                 if hasattr(item, "SetProp"):
                     logger.debug("Resolved unit '%s' via %s collection (first SetProp)", unit_name, attr)
+                    return item
+            # Fallback: first item whose type name contains the requested type
+            for item in self._iterate_collection(coll):
+                if unit_name.lower() in str(type(item)).lower():
+                    logger.debug("Resolved unit '%s' via %s collection (type match)", unit_name, attr)
                     return item
         logger.debug("Unit '%s' has no SetProp and no resolvable collection target", unit_name)
         return unit_obj

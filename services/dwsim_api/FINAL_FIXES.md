@@ -127,3 +127,4 @@ curl -X POST http://localhost:8081/simulate -H "Content-Type: application/json" 
 - All errors are caught and logged with helpful warnings
 - The code continues processing even if some methods fail
 
+
