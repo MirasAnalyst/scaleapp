@@ -269,6 +269,8 @@ def test_dwsim_api():
                         try:
                             for item in coll:
                                 obj = item[1] if isinstance(item, tuple) and len(item) == 2 else item
+                                if hasattr(obj, "Value"):
+                                    obj = obj.Value
                                 if hasattr(obj, "SetProp"):
                                     stream = obj
                                     logger.info(f"Resolved stream via {attr} first SetProp candidate: {type(stream)}")
@@ -279,7 +281,7 @@ def test_dwsim_api():
                         except Exception:
                             continue
                     else:
-                        # Log all simulation objects for debugging
+                        # Log all simulation objects for debugging (Key/Value)
                         for attr in ["MaterialStreams", "SimulationObjects"]:
                             coll = getattr(flowsheet, attr, None)
                             if coll is None:
@@ -287,7 +289,13 @@ def test_dwsim_api():
                             try:
                                 for idx, item in enumerate(coll):
                                     obj = item[1] if isinstance(item, tuple) and len(item) == 2 else item
-                                    logger.info(f"{attr}[{idx}] type={type(obj)} methods={ [m for m in dir(obj) if not m.startswith('_')][:40] }")
+                                    key = None
+                                    if hasattr(item, "Key"):
+                                        key = item.Key
+                                    if hasattr(obj, "Value"):
+                                        key = getattr(obj, "Key", key)
+                                        obj = obj.Value
+                                    logger.info(f"{attr}[{idx}] key={key} type={type(obj)} methods={[m for m in dir(obj) if not m.startswith('_')][:40]}")
                             except Exception as e:
                                 logger.debug(f"Could not iterate {attr}: {e}")
             try:

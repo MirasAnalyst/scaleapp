@@ -912,12 +912,17 @@ class DWSIMClient:
             lambda c, k: c.get_Item(k) if hasattr(c, "get_Item") else None,
         ):
             try:
-                return accessor(collection, key)
+                result = accessor(collection, key)
+                if hasattr(result, "Value"):
+                    return result.Value
+                return result
             except Exception:
                 continue
         # Fallback: iterate and match by Name or GraphicObject.Tag
         try:
             for item in collection:
+                if hasattr(item, "Value"):
+                    item = item.Value
                 name = getattr(item, "Name", None)
                 tag = getattr(getattr(item, "GraphicObject", None), "Tag", None)
                 if name == key or tag == key:
@@ -935,6 +940,8 @@ class DWSIMClient:
             if hasattr(collection, attr):
                 try:
                     for item in getattr(collection, attr):
+                        if hasattr(item, "Value"):
+                            item = item.Value
                         yield item
                     return
                 except Exception:
@@ -945,6 +952,8 @@ class DWSIMClient:
                 # If iterating gives tuples (key, value), use value
                 if isinstance(item, tuple) and len(item) == 2:
                     yield item[1]
+                elif hasattr(item, "Value"):
+                    yield item.Value
                 else:
                     yield item
         except Exception:
