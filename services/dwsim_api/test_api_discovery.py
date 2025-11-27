@@ -245,8 +245,11 @@ def test_dwsim_api():
         stream = _try_methods(stream_methods)
         
         if stream:
+            stream_methods = [m for m in dir(stream) if not m.startswith('_')]
             logger.info(f"  Stream type: {type(stream)}")
-            logger.info(f"  Stream methods: {[m for m in dir(stream) if not m.startswith('_')][:15]}")
+            logger.info(f"  Stream methods (count {len(stream_methods)}): {stream_methods[:80]}")
+            interesting = [m for m in stream_methods if any(key in m.lower() for key in ["prop", "temp", "press", "flow", "set", "val"])]
+            logger.info(f"  Stream methods (interesting): {interesting}")
         else:
             logger.error("✗ Could not create stream with any method")
         
@@ -295,7 +298,9 @@ def test_dwsim_api():
                                     if hasattr(obj, "Value"):
                                         key = getattr(obj, "Key", key)
                                         obj = obj.Value
-                                    logger.info(f"{attr}[{idx}] key={key} type={type(obj)} methods={[m for m in dir(obj) if not m.startswith('_')][:40]}")
+                                    methods = [m for m in dir(obj) if not m.startswith('_')]
+                                    interesting = [m for m in methods if any(k in m.lower() for k in ["prop", "temp", "press", "flow", "set", "val"])]
+                                    logger.info(f"{attr}[{idx}] key={key} type={type(obj)} methods={methods[:80]} interesting={interesting}")
                             except Exception as e:
                                 logger.debug(f"Could not iterate {attr}: {e}")
             try:
