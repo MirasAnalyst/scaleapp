@@ -959,6 +959,29 @@ class DWSIMClient:
         except Exception:
             return
 
+    def _name_or_tag(self, obj, default: str) -> str:
+        """Safely fetch Name or GraphicObject.Tag without triggering attribute errors."""
+        for attr in ("Name", "Tag"):
+            try:
+                value = getattr(obj, attr)
+                if value:
+                    return str(value)
+            except Exception:
+                continue
+        try:
+            graphic = getattr(obj, "GraphicObject", None)
+            if graphic:
+                for attr in ("Tag", "Name"):
+                    try:
+                        value = getattr(graphic, attr)
+                        if value:
+                            return str(value)
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return default
+
     def _set_stream_prop(self, stream_obj, prop_name, phase, comp, basis, unit, value) -> bool:
         """Attempt to set a property on a stream object using multiple APIs."""
         setters = []
@@ -1125,44 +1148,47 @@ class DWSIMClient:
                 stream_list = [sim_objects]
             
             for stream in stream_list:
-                stream_id = getattr(stream, 'Name', getattr(stream, 'GraphicObject', {}).get('Tag', 'stream') if hasattr(stream, 'GraphicObject') else 'stream')
-                type_str = str(type(stream)).lower()
-                # Basic filtering: ensure it's a stream-like object
-                if "stream" not in type_str and not any(stream_id == s.id or stream_id == s.name for s in payload.streams):
-                    continue
                 try:
-                    if hasattr(stream, "GetPropertyValue"):
-                        t = stream.GetPropertyValue("temperature") - 273.15
-                        p = stream.GetPropertyValue("pressure")
-                        flow = stream.GetPropertyValue("totalflow") * 3600
-                    elif hasattr(stream, "GetProp"):
-                        t = stream.GetProp('temperature', 'overall', None, '', 'K')[0] - 273.15
-                        p = stream.GetProp('pressure', 'overall', None, '', 'kPa')[0]
-                        flow = stream.GetProp('totalflow', 'overall', None, '', 'kg/s')[0] * 3600
-                    else:
-                        raise AttributeError("No property getter available")
-                except Exception:
+                    stream_id = self._name_or_tag(stream, "stream")
+                    type_str = str(type(stream)).lower()
+                    # Basic filtering: ensure it's a stream-like object
+                    if "stream" not in type_str and not any(stream_id == s.id or stream_id == s.name for s in payload.streams):
+                        continue
                     try:
-                        # Try alternative property access
-                        t = getattr(stream, 'Temperature', None)
-                        if t is not None:
-                            t = t - 273.15 if t > 100 else t  # Assume K if > 100, else C
-                        p = getattr(stream, 'Pressure', None)
-                        flow = getattr(stream, 'MassFlow', None)
-                        if flow is not None:
-                            flow = flow * 3600  # Convert kg/s to kg/h
+                        if hasattr(stream, "GetPropertyValue"):
+                            t = stream.GetPropertyValue("temperature") - 273.15
+                            p = stream.GetPropertyValue("pressure")
+                            flow = stream.GetPropertyValue("totalflow") * 3600
+                        elif hasattr(stream, "GetProp"):
+                            t = stream.GetProp('temperature', 'overall', None, '', 'K')[0] - 273.15
+                            p = stream.GetProp('pressure', 'overall', None, '', 'kPa')[0]
+                            flow = stream.GetProp('totalflow', 'overall', None, '', 'kg/s')[0] * 3600
+                        else:
+                            raise AttributeError("No property getter available")
                     except Exception:
-                        t = p = flow = None
+                        try:
+                            # Try alternative property access
+                            t = getattr(stream, 'Temperature', None)
+                            if t is not None:
+                                t = t - 273.15 if t > 100 else t  # Assume K if > 100, else C
+                            p = getattr(stream, 'Pressure', None)
+                            flow = getattr(stream, 'MassFlow', None)
+                            if flow is not None:
+                                flow = flow * 3600  # Convert kg/s to kg/h
+                        except Exception:
+                            t = p = flow = None
 
-                results.append(
-                    schemas.StreamResult(
-                        id=str(stream_id),
-                        temperature_c=t,
-                        pressure_kpa=p,
-                        mass_flow_kg_per_h=flow,
-                        composition={comp: 0 for comp in payload.thermo.components},
+                    results.append(
+                        schemas.StreamResult(
+                            id=str(stream_id),
+                            temperature_c=t,
+                            pressure_kpa=p,
+                            mass_flow_kg_per_h=flow,
+                            composition={comp: 0 for comp in payload.thermo.components},
+                        )
                     )
-                )
+                except Exception as item_exc:
+                    logger.debug("Skipping stream extraction due to error: %s", item_exc)
         except Exception as exc:
             logger.warning("Failed to extract DWSIM streams: %s", exc)
         return results
@@ -1209,19 +1235,22 @@ class DWSIMClient:
                 unit_list = [units]
             
             for unit in unit_list:
-                unit_id = getattr(unit, 'Name', getattr(unit, 'GraphicObject', {}).get('Tag', 'unit') if hasattr(unit, 'GraphicObject') else 'unit')
-                type_str = str(type(unit)).lower()
-                if "stream" in type_str:
-                    continue  # skip streams in SimulationObjects
                 try:
-                    duty = getattr(unit, 'DeltaQ', 0)
-                except Exception:
+                    unit_id = self._name_or_tag(unit, "unit")
+                    type_str = str(type(unit)).lower()
+                    if "stream" in type_str:
+                        continue  # skip streams in SimulationObjects
                     try:
-                        duty = getattr(unit, 'HeatFlow', 0)
+                        duty = getattr(unit, 'DeltaQ', 0)
                     except Exception:
-                        duty = 0
-                
-                results.append(schemas.UnitResult(id=str(unit_id), duty_kw=duty, status='ok'))
+                        try:
+                            duty = getattr(unit, 'HeatFlow', 0)
+                        except Exception:
+                            duty = 0
+                    
+                    results.append(schemas.UnitResult(id=str(unit_id), duty_kw=duty, status='ok'))
+                except Exception as item_exc:
+                    logger.debug("Skipping unit extraction due to error: %s", item_exc)
         except Exception as exc:
             logger.warning("Failed to extract DWSIM unit results: %s", exc)
         return results
