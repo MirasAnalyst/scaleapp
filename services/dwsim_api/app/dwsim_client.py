@@ -1151,9 +1151,17 @@ class DWSIMClient:
                 try:
                     stream_id = self._name_or_tag(stream, "stream")
                     type_str = str(type(stream)).lower()
-                    # Basic filtering: ensure it's a stream-like object
-                    if "stream" not in type_str and not any(stream_id == s.id or stream_id == s.name for s in payload.streams):
-                        continue
+                    # Heuristic: treat as stream if type/name suggests it or it exposes stream-like getters
+                    is_stream = (
+                        "stream" in type_str
+                        or "material" in type_str
+                        or stream_id.lower().startswith(("mat", "str", "stream", "eng"))
+                        or any(stream_id == s.id or stream_id == s.name for s in payload.streams)
+                    )
+                    if not is_stream:
+                        probe_ok = any(hasattr(stream, getter) for getter in ("GetPropertyValue", "GetProp"))
+                        if not probe_ok:
+                            continue
                     try:
                         if hasattr(stream, "GetPropertyValue"):
                             t = stream.GetPropertyValue("temperature") - 273.15
