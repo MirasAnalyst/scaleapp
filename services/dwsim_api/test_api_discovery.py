@@ -82,6 +82,36 @@ def _try_methods(methods):
             logger.debug(f"✗ {desc} failed: {e}")
     return None
 
+def _get_collection_item(collection, key):
+    """Attempt to retrieve an item from a .NET collection/dict by key."""
+    for accessor in (
+        lambda c, k: c[k],
+        lambda c, k: c.get_Item(k) if hasattr(c, "get_Item") else None,
+    ):
+        try:
+            return accessor(collection, key)
+        except Exception:
+            continue
+    try:
+        for item in collection:
+            name = getattr(item, "Name", None)
+            tag = getattr(getattr(item, "GraphicObject", None), "Tag", None)
+            if name == key or tag == key:
+                return item
+    except Exception:
+        pass
+    return None
+
+def _resolve_stream_or_unit(flowsheet, name, attrs):
+    for attr in attrs:
+        coll = getattr(flowsheet, attr, None)
+        if coll is None:
+            continue
+        candidate = _get_collection_item(coll, name)
+        if candidate:
+            return candidate, attr
+    return None, None
+
 def inspect_method_signatures(obj, method_name):
     """Inspect all overloads of a method."""
     try:
@@ -212,6 +242,12 @@ def test_dwsim_api():
         # Test 6: Set stream properties (if stream was created)
         if stream:
             logger.info("\n=== Testing Stream Property Setting ===")
+            # Resolve real stream object if the current one lacks SetProp
+            if not hasattr(stream, "SetProp"):
+                candidate, source = _resolve_stream_or_unit(flowsheet, "test-stream", ["MaterialStreams", "SimulationObjects"])
+                if candidate:
+                    logger.info(f"Resolved stream via {source} collection for property setting: {type(candidate)}")
+                    stream = candidate
             try:
                 stream.SetProp("temperature", "overall", None, "", "K", 373.15)
                 logger.info("✓ SetProp('temperature', ...) works")

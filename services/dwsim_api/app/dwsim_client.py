@@ -621,6 +621,8 @@ class DWSIMClient:
                 continue
             
             try:
+                # If the object we got lacks SetProp, try to resolve the real MaterialStream from collections
+                stream_obj = self._resolve_stream_object(flowsheet, stream_name, stream_obj)
                 stream_map[stream_spec.id] = stream_obj
                 
                 # Set stream properties
@@ -893,20 +895,23 @@ class DWSIMClient:
                 
                 elif unit_spec.type in ["pump", "compressor"]:
                     if "pressure_rise" in params:
+                        target = self._resolve_unit_object(flowsheet, unit_spec.id, unit_obj)
                         try:
-                            unit_obj.SetProp("PressureIncrease", params["pressure_rise"])
+                            target.SetProp("PressureIncrease", params["pressure_rise"])
                         except Exception:
                             pass
                     if "efficiency" in params:
+                        target = self._resolve_unit_object(flowsheet, unit_spec.id, unit_obj)
                         try:
-                            unit_obj.SetProp("Efficiency", params["efficiency"])
+                            target.SetProp("Efficiency", params["efficiency"])
                         except Exception:
                             pass
                 
                 elif unit_spec.type in ["heaterCooler", "shellTubeHX"]:
                     if "duty" in params:
+                        target = self._resolve_unit_object(flowsheet, unit_spec.id, unit_obj)
                         try:
-                            unit_obj.SetProp("HeatFlow", params["duty"])
+                            target.SetProp("HeatFlow", params["duty"])
                         except Exception:
                             pass
                 
@@ -928,6 +933,57 @@ class DWSIMClient:
         except Exception:
             pass
         return None
+
+    def _get_collection_item(self, collection, key):
+        """Attempt to retrieve an item from a .NET collection/dict by key."""
+        for accessor in (
+            lambda c, k: c[k],
+            lambda c, k: c.get_Item(k) if hasattr(c, "get_Item") else None,
+        ):
+            try:
+                return accessor(collection, key)
+            except Exception:
+                continue
+        # Fallback: iterate and match by Name or GraphicObject.Tag
+        try:
+            for item in collection:
+                name = getattr(item, "Name", None)
+                tag = getattr(getattr(item, "GraphicObject", None), "Tag", None)
+                if name == key or tag == key:
+                    return item
+        except Exception:
+            pass
+        return None
+
+    def _resolve_stream_object(self, flowsheet, stream_name: str, stream_obj):
+        """If the returned object lacks SetProp, resolve the actual MaterialStream from collections."""
+        if hasattr(stream_obj, "SetProp"):
+            return stream_obj
+        for attr in ["MaterialStreams", "SimulationObjects"]:
+            coll = getattr(flowsheet, attr, None)
+            if coll is None:
+                continue
+            candidate = self._get_collection_item(coll, stream_name)
+            if candidate and hasattr(candidate, "SetProp"):
+                logger.debug("Resolved stream '%s' via %s collection to object with SetProp", stream_name, attr)
+                return candidate
+        logger.debug("Stream '%s' has no SetProp and no resolvable collection target", stream_name)
+        return stream_obj
+
+    def _resolve_unit_object(self, flowsheet, unit_name: str, unit_obj):
+        """If the returned unit lacks SetProp, resolve it from UnitOperations or SimulationObjects."""
+        if hasattr(unit_obj, "SetProp"):
+            return unit_obj
+        for attr in ["UnitOperations", "SimulationObjects"]:
+            coll = getattr(flowsheet, attr, None)
+            if coll is None:
+                continue
+            candidate = self._get_collection_item(coll, unit_name)
+            if candidate and hasattr(candidate, "SetProp"):
+                logger.debug("Resolved unit '%s' via %s collection to object with SetProp", unit_name, attr)
+                return candidate
+        logger.debug("Unit '%s' has no SetProp and no resolvable collection target", unit_name)
+        return unit_obj
 
     def _create_unit_via_method(self, flowsheet, dwsim_type: str, unit_id: str, x: float, y: float):
         """Try to create unit via type-specific methods (e.g., CreatePump, AddPump)."""
