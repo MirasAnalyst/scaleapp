@@ -1099,23 +1099,48 @@ class DWSIMClient:
             except Exception as e:
                 logger.debug("MaterialStreams property access failed: %s", e)
         
+        # Fallback: use SimulationObjects collection
+        if sim_objects is None:
+            try:
+                if hasattr(flowsheet, "SimulationObjects"):
+                    sim_objects = flowsheet.SimulationObjects
+                    logger.debug("Retrieved streams via SimulationObjects fallback")
+            except Exception as e:
+                logger.debug("SimulationObjects access failed: %s", e)
+        
         if sim_objects is None:
             logger.warning("Could not retrieve streams from flowsheet")
             return results
         
         try:
             # Handle both iterable collections and single objects
-            if hasattr(sim_objects, '__iter__') and not isinstance(sim_objects, str):
-                stream_list = list(sim_objects)
-            else:
-                stream_list = [sim_objects] if sim_objects else []
+            stream_list = []
+            try:
+                if hasattr(sim_objects, '__iter__') and not isinstance(sim_objects, str):
+                    for item in self._iterate_collection(sim_objects):
+                        stream_list.append(item)
+                else:
+                    stream_list = [sim_objects] if sim_objects else []
+            except Exception:
+                stream_list = [sim_objects]
             
             for stream in stream_list:
                 stream_id = getattr(stream, 'Name', getattr(stream, 'GraphicObject', {}).get('Tag', 'stream') if hasattr(stream, 'GraphicObject') else 'stream')
+                type_str = str(type(stream)).lower()
+                # Basic filtering: ensure it's a stream-like object
+                if "stream" not in type_str and not any(stream_id == s.id or stream_id == s.name for s in payload.streams):
+                    continue
                 try:
-                    t = stream.GetProp('temperature', 'overall', None, '', 'K')[0] - 273.15
-                    p = stream.GetProp('pressure', 'overall', None, '', 'kPa')[0]
-                    flow = stream.GetProp('totalflow', 'overall', None, '', 'kg/s')[0] * 3600
+                    if hasattr(stream, "GetPropertyValue"):
+                        t = stream.GetPropertyValue("temperature") - 273.15
+                        p = stream.GetPropertyValue("pressure")
+                        flow = stream.GetPropertyValue("totalflow") * 3600
+                    elif hasattr(stream, "GetProp"):
+                        t = stream.GetProp('temperature', 'overall', None, '', 'K')[0] - 273.15
+                        p = stream.GetProp('pressure', 'overall', None, '', 'kPa')[0]
+                        flow = stream.GetProp('totalflow', 'overall', None, '', 'kg/s')[0] * 3600
+                    else:
+                        raise AttributeError("No property getter available")
                 except Exception:
                     try:
                         # Try alternative property access
@@ -1159,19 +1184,35 @@ class DWSIMClient:
             except Exception as e:
                 logger.debug("UnitOperations property access failed: %s", e)
         
+        # Fallback: SimulationObjects collection
+        if units is None and hasattr(flowsheet, "SimulationObjects"):
+            try:
+                units = flowsheet.SimulationObjects
+                logger.debug("Retrieved units via SimulationObjects fallback")
+            except Exception as e:
+                logger.debug("SimulationObjects fallback failed: %s", e)
+        
         if units is None:
             logger.warning("Could not retrieve units from flowsheet")
             return results
         
         try:
             # Handle both iterable collections and single objects
-            if hasattr(units, '__iter__') and not isinstance(units, str):
-                unit_list = list(units)
-            else:
-                unit_list = [units] if units else []
+            unit_list = []
+            try:
+                if hasattr(units, '__iter__') and not isinstance(units, str):
+                    for item in self._iterate_collection(units):
+                        unit_list.append(item)
+                else:
+                    unit_list = [units] if units else []
+            except Exception:
+                unit_list = [units]
             
             for unit in unit_list:
                 unit_id = getattr(unit, 'Name', getattr(unit, 'GraphicObject', {}).get('Tag', 'unit') if hasattr(unit, 'GraphicObject') else 'unit')
+                type_str = str(type(unit)).lower()
+                if "stream" in type_str:
+                    continue  # skip streams in SimulationObjects
                 try:
                     duty = getattr(unit, 'DeltaQ', 0)
                 except Exception:
