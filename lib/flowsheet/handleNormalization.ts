@@ -221,20 +221,30 @@ const normalizeHandle = (
 
 const normalizeEdgeHandles = (nodes: FlowNode[], edges: FlowEdge[]): FlowEdge[] => {
   const nodeTypeMap = new Map(nodes.map(node => [node.id, node.type]));
-  return edges.map(edge => {
-    const sourceType = nodeTypeMap.get(edge.source);
-    const targetType = nodeTypeMap.get(edge.target);
-    return {
-      ...edge,
-      sourceHandle: normalizeHandle(edge.sourceHandle, sourceType, 'source'),
-      targetHandle: normalizeHandle(edge.targetHandle, targetType, 'target'),
-    };
-  });
+  return edges
+    .filter(edge => nodeTypeMap.has(edge.source) && nodeTypeMap.has(edge.target)) // drop edges to removed nodes
+    .map(edge => {
+      const sourceType = nodeTypeMap.get(edge.source);
+      const targetType = nodeTypeMap.get(edge.target);
+      const sourceHandle = normalizeHandle(edge.sourceHandle, sourceType, 'source') ?? 'outlet';
+      const targetHandle = normalizeHandle(edge.targetHandle, targetType, 'target') ?? 'inlet';
+      return {
+        ...edge,
+        sourceHandle,
+        targetHandle,
+      };
+    });
 };
 
 export const normalizeFlowsheetHandles = (data: FlowSheetData): FlowSheetData => {
+  // Drop non-simulation label nodes to avoid unsupported types in DWSIM
+  const filteredNodes = (data.nodes || []).filter(node => node.type !== 'label');
+  // Normalize handles and drop edges pointing to dropped nodes
+  const normalizedEdges = normalizeEdgeHandles(filteredNodes, data.edges || []);
+
   return {
     ...data,
-    edges: normalizeEdgeHandles(data.nodes, data.edges),
+    nodes: filteredNodes,
+    edges: normalizedEdges,
   };
 };

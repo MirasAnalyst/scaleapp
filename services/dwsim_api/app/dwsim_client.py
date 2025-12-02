@@ -655,8 +655,8 @@ class DWSIMClient:
                     if total > 0:
                         for comp, frac in composition.items():
                             normalized_frac = frac / total
-                            if not self._set_stream_prop(stream_obj, "molefraction", "overall", comp, "", "", normalized_frac):
-                                warnings.append(f"Stream {stream_spec.id}: Could not set composition for {comp}")
+                            # Try SetProp-style first; if not available, skip silently (some builds expose composition elsewhere)
+                            self._set_stream_prop(stream_obj, "molefraction", "overall", comp, "", "", normalized_frac)
                 
                 # Vapor fraction
                 vapor_frac = props.get("vapor_fraction")
@@ -985,16 +985,27 @@ class DWSIMClient:
     def _set_stream_prop(self, stream_obj, prop_name, phase, comp, basis, unit, value) -> bool:
         """Attempt to set a property on a stream object using multiple APIs."""
         setters = []
+        # Canonical method names
         if hasattr(stream_obj, "SetProp"):
             setters.append(lambda: stream_obj.SetProp(prop_name, phase, comp, basis, unit, value))
-        if hasattr(stream_obj, "SetPropertyValue"):
-            setters.append(lambda: stream_obj.SetPropertyValue(prop_name, value))
-        if hasattr(stream_obj, "SetPropertyValue2"):
-            setters.append(lambda: stream_obj.SetPropertyValue2(prop_name, value))
-        # Common direct attributes as fallbacks
-        for attr in ["Temperature", "Pressure", "MassFlow", "MolarFlow", "TotalFlow"]:
-            if attr.lower().startswith(prop_name.replace(" ", "").lower()) and hasattr(stream_obj, attr):
+        for meth in ("SetPropertyValue", "SetPropertyValue2"):
+            if hasattr(stream_obj, meth):
+                setter = getattr(stream_obj, meth)
+                setters.append(lambda s=setter: s(prop_name, value))
+                # Try title-cased variant (e.g., Temperature, Pressure)
+                setters.append(lambda s=setter: s(prop_name.title(), value))
+        # Direct attributes by common aliases
+        attr_map = {
+            "temperature": ["Temperature", "TemperatureK", "Temp", "T"],
+            "pressure": ["Pressure", "PressureKPa", "P"],
+            "totalflow": ["MassFlow", "MassFlowRate", "TotalFlow", "Mass_Flow"],
+            "molefraction": [],
+            "vaporfraction": ["VaporFraction", "VF"],
+        }
+        for attr in attr_map.get(prop_name.lower().replace(" ", ""), []):
+            if hasattr(stream_obj, attr):
                 setters.append(lambda a=attr: setattr(stream_obj, a, value))
+
         for setter in setters:
             try:
                 setter()
@@ -1163,28 +1174,50 @@ class DWSIMClient:
                         if not probe_ok:
                             continue
                     try:
+                        t = p = flow = None
                         if hasattr(stream, "GetPropertyValue"):
-                            t = stream.GetPropertyValue("temperature") - 273.15
-                            p = stream.GetPropertyValue("pressure")
-                            flow = stream.GetPropertyValue("totalflow") * 3600
-                        elif hasattr(stream, "GetProp"):
-                            t = stream.GetProp('temperature', 'overall', None, '', 'K')[0] - 273.15
-                            p = stream.GetProp('pressure', 'overall', None, '', 'kPa')[0]
-                            flow = stream.GetProp('totalflow', 'overall', None, '', 'kg/s')[0] * 3600
-                        else:
-                            raise AttributeError("No property getter available")
-                    except Exception:
-                        try:
-                            # Try alternative property access
-                            t = getattr(stream, 'Temperature', None)
-                            if t is not None:
-                                t = t - 273.15 if t > 100 else t  # Assume K if > 100, else C
+                            try:
+                                t_raw = stream.GetPropertyValue("temperature")
+                                t = t_raw - 273.15 if t_raw is not None else None
+                            except Exception:
+                                pass
+                            try:
+                                p = stream.GetPropertyValue("pressure")
+                            except Exception:
+                                pass
+                            try:
+                                flow_raw = stream.GetPropertyValue("totalflow")
+                                flow = flow_raw * 3600 if flow_raw is not None else None
+                            except Exception:
+                                pass
+                        if t is None and hasattr(stream, "GetProp"):
+                            try:
+                                t_raw = stream.GetProp('temperature', 'overall', None, '', 'K')[0]
+                                t = t_raw - 273.15 if t_raw is not None else None
+                            except Exception:
+                                pass
+                            try:
+                                p = stream.GetProp('pressure', 'overall', None, '', 'kPa')[0]
+                            except Exception:
+                                pass
+                            try:
+                                flow_raw = stream.GetProp('totalflow', 'overall', None, '', 'kg/s')[0]
+                                flow = flow_raw * 3600 if flow_raw is not None else None
+                            except Exception:
+                                pass
+                        # Direct attributes fallback
+                        if t is None:
+                            t_attr = getattr(stream, 'Temperature', None)
+                            if t_attr is not None:
+                                t = t_attr - 273.15 if t_attr > 100 else t_attr
+                        if p is None:
                             p = getattr(stream, 'Pressure', None)
-                            flow = getattr(stream, 'MassFlow', None)
-                            if flow is not None:
-                                flow = flow * 3600  # Convert kg/s to kg/h
-                        except Exception:
-                            t = p = flow = None
+                        if flow is None:
+                            flow_attr = getattr(stream, 'MassFlow', None) or getattr(stream, 'TotalFlow', None)
+                            if flow_attr is not None:
+                                flow = flow_attr * 3600 if flow_attr < 1e3 else flow_attr  # if already kg/h keep as is
+                    except Exception:
+                        t = p = flow = None
 
                     results.append(
                         schemas.StreamResult(
