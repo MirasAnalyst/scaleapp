@@ -96,8 +96,21 @@ def test_dwsim_api():
                     return getattr(enum_cls, attr)
             return None
 
-        ms_enum = _enum_value(GO.ObjectType, "MaterialStream")
+        def _find_go_enum(name: str):
+            """Try multiple GO enums to resolve a type name."""
+            for enum_attr in ["ObjectType", "GraphicObjectType"]:
+                enum_cls = getattr(GO, enum_attr, None)
+                if enum_cls:
+                    val = _enum_value(enum_cls, name)
+                    if val:
+                        logger.info(f"Using GO.{enum_attr}.{name} for AddObject")
+                        return val
+            logger.warning(f"Could not resolve enum value for {name}; falling back to string overloads")
+            return None
+
+        ms_enum = _find_go_enum("MaterialStream")
         try:
+            stream = None
             if ms_enum:
                 stream = flowsheet.AddObject(ms_enum, 100, 100, "test-stream")
                 logger.info("✓ AddObject(ObjectType.MaterialStream, ...) works")
@@ -116,6 +129,7 @@ def test_dwsim_api():
         # Test 6: Set stream properties
         logger.info("\n=== Testing Stream Property Setting ===")
         try:
+            stream = None
             if ms_enum:
                 stream = flowsheet.AddObject(ms_enum, 200, 100, "test-stream-2")
             else:
@@ -125,15 +139,15 @@ def test_dwsim_api():
         except Exception as e:
             logger.warning(f"✗ SetProp() failed: {e}")
             # Check for alternatives
-            if hasattr(stream, 'Temperature'):
+            if stream is not None and hasattr(stream, 'Temperature'):
                 logger.info("  Found property: Temperature")
-            if hasattr(stream, 'SetTemperature'):
+            if stream is not None and hasattr(stream, 'SetTemperature'):
                 logger.info("  Found method: SetTemperature")
         
         # Test 7: Create unit operation
         logger.info("\n=== Testing Unit Operation Creation ===")
         try:
-            pump_enum = _enum_value(GO.ObjectType, "Pump") if 'GO' in locals() else None
+            pump_enum = _find_go_enum("Pump") if 'GO' in locals() else None
             if pump_enum:
                 unit = flowsheet.AddObject(pump_enum, 300, 100, "test-pump")
                 logger.info("✓ AddObject(ObjectType.Pump, ...) works")

@@ -556,8 +556,8 @@ class DWSIMClient:
             method_attempts = []
             if stream_enum is not None:
                 method_attempts.extend([
-                    ("AddObject(enum, coords)", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddObject(stream_enum, sn, float(x_coord), float(y_coord))),
-                    ("AddObject(enum)", lambda sn=stream_name: flowsheet.AddObject(stream_enum, sn)),
+                    ("AddObject(enum, coords)", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddObject(stream_enum, float(x_coord), float(y_coord), sn)),
+                    ("AddObject(enum)", lambda sn=stream_name: flowsheet.AddObject(stream_enum, sn) if hasattr(flowsheet, 'AddObject') else None),
                 ])
                 if hasattr(flowsheet, 'AddFlowsheetObject'):
                     method_attempts.extend([
@@ -589,8 +589,8 @@ class DWSIMClient:
                         (f"AddGraphicObject('{type_name}')", lambda tn=type_name, sn=stream_name: flowsheet.AddGraphicObject(tn, sn)),
                     ])
                 method_attempts.extend([
-                    (f"AddObject('{type_name}', coords)", lambda tn=type_name, sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddObject(tn, sn, x_coord, y_coord)),
-                    (f"AddObject('{type_name}')", lambda tn=type_name, sn=stream_name: flowsheet.AddObject(tn, sn)),
+                    (f"AddObject('{type_name}', coords)", lambda tn=type_name, sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddObject(tn, float(x_coord), float(y_coord), sn)),
+                    (f"AddObject('{type_name}')", lambda tn=type_name, sn=stream_name: flowsheet.AddObject(tn, sn) if hasattr(flowsheet, 'AddObject') else None),
                 ])
 
             method_attempts.extend([
@@ -728,8 +728,8 @@ class DWSIMClient:
             method_attempts.append(("AddFlowsheetObject(str)", lambda ut=dwsim_type, uid=unit_spec.id: flowsheet.AddFlowsheetObject(ut, uid) if hasattr(flowsheet, 'AddFlowsheetObject') else None))
             if unit_enum is not None:
                 method_attempts.extend([
-                    ("AddObject(enum, coords)", lambda ut=unit_enum, uid=unit_spec.id, x_coord=x, y_coord=y: flowsheet.AddObject(ut, uid, float(x_coord), float(y_coord))),
-                    ("AddObject(enum)", lambda ut=unit_enum, uid=unit_spec.id: flowsheet.AddObject(ut, uid)),
+                    ("AddObject(enum, coords)", lambda ut=unit_enum, uid=unit_spec.id, x_coord=x, y_coord=y: flowsheet.AddObject(ut, float(x_coord), float(y_coord), uid)),
+                    ("AddObject(enum)", lambda ut=unit_enum, uid=unit_spec.id: flowsheet.AddObject(ut, uid) if hasattr(flowsheet, 'AddObject') else None),
                 ])
                 if hasattr(flowsheet, 'AddFlowsheetObject'):
                     method_attempts.extend([
@@ -758,8 +758,8 @@ class DWSIMClient:
                     ("AddGraphicObject(str)", lambda ut=dwsim_type, uid=unit_spec.id: flowsheet.AddGraphicObject(ut, uid)),
                 ])
             method_attempts.extend([
-                ("AddObject(str, coords)", lambda ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y: flowsheet.AddObject(ut, uid, x_coord, y_coord)),
-                ("AddObject(str)", lambda ut=dwsim_type, uid=unit_spec.id: flowsheet.AddObject(ut, uid)),
+                ("AddObject(str, coords)", lambda ut=dwsim_type, uid=unit_spec.id, x_coord=x, y_coord=y: flowsheet.AddObject(ut, x_coord, y_coord, uid)),
+                ("AddObject(str)", lambda ut=dwsim_type, uid=unit_spec.id: flowsheet.AddObject(ut, uid) if hasattr(flowsheet, 'AddObject') else None),
                 ("Type-specific method", lambda: self._create_unit_via_method(flowsheet, dwsim_type, unit_spec.id, x, y)),
                 ("Collection-based creation", lambda: self._create_unit_via_collection(flowsheet, dwsim_type, unit_spec.id, x, y)),
             ])
