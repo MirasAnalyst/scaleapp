@@ -19,15 +19,17 @@ def test_dwsim_api():
     try:
         import pythonnet
         import clr
-        
+
         # Load DWSIM automation
         lib_path = os.getenv('DWSIM_LIB_PATH', 'C:/Program Files/DWSIM')
         if str(lib_path) not in sys.path:
             sys.path.append(str(lib_path))
-        
+
         # Load DWSIM.Automation.dll
         clr.AddReference("DWSIM.Automation")
+        clr.AddReference("DWSIM.Interfaces")
         from DWSIM.Automation import Automation3
+        from DWSIM.Interfaces.Enums import GraphicObjects as GO
         
         automation = Automation3()
         logger.info("✓ DWSIM Automation loaded successfully")
@@ -87,9 +89,21 @@ def test_dwsim_api():
         
         # Test 5: Create material stream
         logger.info("\n=== Testing Material Stream Creation ===")
+        def _enum_value(enum_cls, name):
+            """Return enum value by loose name matching."""
+            for attr in dir(enum_cls):
+                if attr.lower() == name.lower() or attr.replace("_", "").lower() == name.replace(" ", "").lower():
+                    return getattr(enum_cls, attr)
+            return None
+
+        ms_enum = _enum_value(GO.ObjectType, "MaterialStream")
         try:
-            stream = flowsheet.AddObject("MaterialStream", "test-stream", 100, 100)
-            logger.info("✓ AddObject('MaterialStream', ...) works")
+            if ms_enum:
+                stream = flowsheet.AddObject(ms_enum, 100, 100, "test-stream")
+                logger.info("✓ AddObject(ObjectType.MaterialStream, ...) works")
+            else:
+                stream = flowsheet.AddObject("MaterialStream", "test-stream", 100, 100)
+                logger.info("✓ AddObject('MaterialStream', ...) works (string overload)")
             logger.info(f"  Stream type: {type(stream)}")
             logger.info(f"  Stream methods: {[m for m in dir(stream) if not m.startswith('_')][:15]}")
         except Exception as e:
@@ -98,11 +112,14 @@ def test_dwsim_api():
             for method in ['CreateMaterialStream', 'AddMaterialStream', 'NewMaterialStream']:
                 if hasattr(flowsheet, method):
                     logger.info(f"  Found method: {method}")
-        
+
         # Test 6: Set stream properties
         logger.info("\n=== Testing Stream Property Setting ===")
         try:
-            stream = flowsheet.AddObject("MaterialStream", "test-stream-2", 200, 100)
+            if ms_enum:
+                stream = flowsheet.AddObject(ms_enum, 200, 100, "test-stream-2")
+            else:
+                stream = flowsheet.AddObject("MaterialStream", "test-stream-2", 200, 100)
             stream.SetProp("temperature", "overall", None, "", "K", 373.15)
             logger.info("✓ SetProp('temperature', ...) works")
         except Exception as e:
@@ -116,8 +133,13 @@ def test_dwsim_api():
         # Test 7: Create unit operation
         logger.info("\n=== Testing Unit Operation Creation ===")
         try:
-            unit = flowsheet.AddObject("Pump", "test-pump", 300, 100)
-            logger.info("✓ AddObject('Pump', ...) works")
+            pump_enum = _enum_value(GO.ObjectType, "Pump") if 'GO' in locals() else None
+            if pump_enum:
+                unit = flowsheet.AddObject(pump_enum, 300, 100, "test-pump")
+                logger.info("✓ AddObject(ObjectType.Pump, ...) works")
+            else:
+                unit = flowsheet.AddObject("Pump", "test-pump", 300, 100)
+                logger.info("✓ AddObject('Pump', ...) works (string overload)")
             logger.info(f"  Unit type: {type(unit)}")
             logger.info(f"  Unit methods: {[m for m in dir(unit) if not m.startswith('_')][:15]}")
         except Exception as e:
@@ -161,4 +183,3 @@ def test_dwsim_api():
 
 if __name__ == "__main__":
     test_dwsim_api()
-
