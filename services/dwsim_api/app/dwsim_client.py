@@ -625,6 +625,15 @@ class DWSIMClient:
                 stream_obj = self._resolve_stream_object(flowsheet, stream_name, stream_obj)
                 stream_map[stream_spec.id] = stream_obj
                 
+                # Set the stream name/tag so we can find it later during extraction
+                try:
+                    if hasattr(stream_obj, "Name"):
+                        stream_obj.Name = stream_name
+                    elif hasattr(stream_obj, "GraphicObject") and hasattr(stream_obj.GraphicObject, "Tag"):
+                        stream_obj.GraphicObject.Tag = stream_name
+                except Exception:
+                    logger.debug("Could not set name/tag for stream %s", stream_name)
+                
                 # Set stream properties
                 props = stream_spec.properties or {}
                 
@@ -807,8 +816,9 @@ class DWSIMClient:
                 if target_unit:
                     try:
                         # Map port handles to DWSIM port indices
-                        # This is simplified - actual port mapping depends on unit type
-                        port = self._map_port_to_index(stream_spec.targetHandle, stream_spec.target)
+                        # Handle missing targetHandle gracefully (use default port 0)
+                        target_handle = getattr(stream_spec, 'targetHandle', None)
+                        port = self._map_port_to_index(target_handle, stream_spec.target)
                         target_unit.SetInletStream(port, stream_obj)
                         logger.debug("Connected stream %s to unit %s (port %s)", stream_spec.id, stream_spec.target, port)
                     except Exception as exc:
@@ -821,7 +831,9 @@ class DWSIMClient:
                 source_unit = unit_map.get(stream_spec.source)
                 if source_unit:
                     try:
-                        port = self._map_port_to_index(stream_spec.sourceHandle, stream_spec.source)
+                        # Handle missing sourceHandle gracefully (use default port 0)
+                        source_handle = getattr(stream_spec, 'sourceHandle', None)
+                        port = self._map_port_to_index(source_handle, stream_spec.source)
                         source_unit.SetOutletStream(port, stream_obj)
                         logger.debug("Connected stream %s from unit %s (port %s)", stream_spec.id, stream_spec.source, port)
                     except Exception as exc:
