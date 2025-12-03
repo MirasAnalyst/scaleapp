@@ -812,10 +812,11 @@ class DWSIMClient:
                            hasattr(stream_obj, "SetProp"), 
                            hasattr(stream_obj, "SetPropertyValue"))
                 
-                # CRITICAL: If we still have ISimulationObject, try one more time to get MaterialStream
-                # by looking it up in MaterialStreams collection right after creation
-                if "isimulationobject" in final_type.lower() and "materialstream" not in final_type.lower():
-                    logger.warning("Stream %s is still ISimulationObject, attempting MaterialStream lookup from collection", stream_spec.id)
+                # CRITICAL: If we don't have SetProp, try to get MaterialStream from collection
+                # MaterialStream implements ISimulationObject, so type checking alone isn't enough
+                # We need to check for SetProp method which is the key differentiator
+                if not hasattr(stream_obj, "SetProp"):
+                    logger.warning("Stream %s doesn't have SetProp, attempting MaterialStream lookup from collection", stream_spec.id)
                     try:
                         if hasattr(flowsheet, "MaterialStreams"):
                             # Get all streams and find the one we just created
@@ -826,34 +827,40 @@ class DWSIMClient:
                             for idx, item in enumerate(all_streams):
                                 item_type = str(type(item))
                                 item_name = getattr(item, "Name", None)
-                                logger.debug("Stream %d in collection: name='%s', type=%s, has_SetProp=%s", 
-                                           idx, item_name, item_type, hasattr(item, "SetProp"))
+                                item_tag = getattr(getattr(item, "GraphicObject", None), "Tag", None)
+                                has_setprop = hasattr(item, "SetProp")
+                                logger.info("Stream %d in collection: name='%s', tag='%s', type=%s, has_SetProp=%s", 
+                                           idx, item_name, item_tag, item_type, has_setprop)
                             
-                            # Try to match by name or take the last one (most recently created)
+                            # PRIORITY 1: Match by name/tag AND has SetProp (this is the actual MaterialStream)
                             for item in reversed(all_streams):  # Check newest first
-                                item_type = str(type(item)).lower()
                                 item_name = getattr(item, "Name", None)
+                                item_tag = getattr(getattr(item, "GraphicObject", None), "Tag", None)
                                 
-                                # Prefer MaterialStream type
-                                if "materialstream" in item_type and "isimulationobject" not in item_type:
-                                    if item_name == stream_name or not item_name:
+                                # Match by name or tag
+                                if item_name == stream_name or item_tag == stream_name:
+                                    # If it has SetProp, use it immediately (this is what we need!)
+                                    if hasattr(item, "SetProp"):
                                         stream_obj = item
-                                        logger.info("Resolved to MaterialStream: %s (type: %s, name: %s)", 
-                                                  stream_spec.id, type(item).__name__, item_name)
+                                        logger.info("✓ Resolved to MaterialStream with SetProp: %s (type: %s, name: %s, tag: %s)", 
+                                                  stream_spec.id, type(item).__name__, item_name, item_tag)
                                         stream_map[stream_spec.id] = stream_obj  # Update the map
                                         break
-                                # Also try if it has SetProp (even if type name doesn't match)
-                                elif hasattr(item, "SetProp"):
-                                    if item_name == stream_name or not item_name:
+                            
+                            # PRIORITY 2: If no name match, take the most recent stream with SetProp
+                            if not hasattr(stream_obj, "SetProp"):
+                                for item in reversed(all_streams):  # Check newest first
+                                    if hasattr(item, "SetProp"):
                                         stream_obj = item
-                                        logger.info("Resolved to object with SetProp: %s (type: %s, name: %s)", 
+                                        item_name = getattr(item, "Name", None)
+                                        logger.info("✓ Resolved to most recent MaterialStream with SetProp: %s (type: %s, name: %s)", 
                                                   stream_spec.id, type(item).__name__, item_name)
                                         stream_map[stream_spec.id] = stream_obj
                                         break
                     except Exception as e:
                         logger.warning("MaterialStream collection lookup failed: %s", e)
                         import traceback
-                        logger.debug("Traceback: %s", traceback.format_exc())
+                        logger.error("Traceback: %s", traceback.format_exc())
                 
                 # Set stream properties
                 # Verify we're using the correct object (after potential resolution)
@@ -1502,7 +1509,13 @@ class DWSIMClient:
         """Attempt to set a property on a stream object using multiple APIs."""
         setters = []
         
-        # For ISimulationObject, try SetPropertyValue first (this is the interface method)
+        # PRIORITY 1: SetProp is the canonical MaterialStream method - try this FIRST if available
+        # This is the method that actually works on MaterialStream objects
+        if hasattr(stream_obj, "SetProp"):
+            setters.append(lambda: stream_obj.SetProp(prop_name, phase, comp, basis, unit, value))
+            logger.debug("Using SetProp method for property '%s'", prop_name)
+        
+        # PRIORITY 2: For ISimulationObject, try SetPropertyValue (interface method, but may not work)
         stream_type_str = str(type(stream_obj)).lower()
         if "isimulationobject" in stream_type_str:
             if hasattr(stream_obj, "SetPropertyValue"):
@@ -1516,32 +1529,28 @@ class DWSIMClient:
                 }
                 prop_key = prop_map.get(prop_name.lower(), prop_name)
                 
-                # Try SetPropertyValue with different signatures and property name formats (prioritize these)
-                # Insert at beginning so they're tried first
-                setters.insert(0, lambda: stream_obj.SetPropertyValue(prop_key, value))
-                setters.insert(1, lambda: stream_obj.SetPropertyValue(prop_name.title(), value))
-                setters.insert(2, lambda: stream_obj.SetPropertyValue(prop_name, value))
+                # Try SetPropertyValue with different signatures and property name formats
+                setters.append(lambda: stream_obj.SetPropertyValue(prop_key, value))
+                setters.append(lambda: stream_obj.SetPropertyValue(prop_name.title(), value))
+                setters.append(lambda: stream_obj.SetPropertyValue(prop_name, value))
                 
                 # Try with phase parameter (if SetPropertyValue takes phase)
                 if phase:
-                    setters.insert(3, lambda: stream_obj.SetPropertyValue(prop_key, phase, value) if len(stream_obj.SetPropertyValue.__code__.co_argnames) >= 3 else None)
-                    setters.insert(4, lambda: stream_obj.SetPropertyValue(prop_name.title(), phase, value) if len(stream_obj.SetPropertyValue.__code__.co_argnames) >= 3 else None)
+                    # Try 3-parameter version (property, phase, value) - catch if it fails
+                    setters.append(lambda: stream_obj.SetPropertyValue(prop_key, phase, value))
+                    setters.append(lambda: stream_obj.SetPropertyValue(prop_name.title(), phase, value))
                 
                 # Also try with "Prop" suffix
-                setters.insert(5, lambda: stream_obj.SetPropertyValue(f"{prop_key}Prop", value))
+                setters.append(lambda: stream_obj.SetPropertyValue(f"{prop_key}Prop", value))
                 
                 # If it's composition, try SetPropertyValue with component
                 if prop_name.lower() == "molefraction" and comp:
-                    setters.insert(6, lambda c=comp, v=value: stream_obj.SetPropertyValue(f"MoleFraction_{c}", v))
-                    setters.insert(7, lambda c=comp, v=value: stream_obj.SetPropertyValue(f"{c}_MoleFraction", v))
-                    setters.insert(8, lambda c=comp, v=value: stream_obj.SetPropertyValue(f"{c}.MoleFraction", v))
+                    setters.append(lambda c=comp, v=value: stream_obj.SetPropertyValue(f"MoleFraction_{c}", v))
+                    setters.append(lambda c=comp, v=value: stream_obj.SetPropertyValue(f"{c}_MoleFraction", v))
+                    setters.append(lambda c=comp, v=value: stream_obj.SetPropertyValue(f"{c}.MoleFraction", v))
                     # Try with phase and component
                     if phase:
-                        setters.insert(9, lambda c=comp, v=value, p=phase: stream_obj.SetPropertyValue(f"MoleFraction_{c}", p, v) if len(stream_obj.SetPropertyValue.__code__.co_argnames) >= 3 else None)
-        
-        # Canonical method names (SetProp - usually on MaterialStream, not ISimulationObject)
-        if hasattr(stream_obj, "SetProp"):
-            setters.append(lambda: stream_obj.SetProp(prop_name, phase, comp, basis, unit, value))
+                        setters.append(lambda c=comp, v=value, p=phase: stream_obj.SetPropertyValue(f"MoleFraction_{c}", p, v))
         for meth in ("SetPropertyValue", "SetPropertyValue2"):
             if hasattr(stream_obj, meth):
                 setter = getattr(stream_obj, meth)
