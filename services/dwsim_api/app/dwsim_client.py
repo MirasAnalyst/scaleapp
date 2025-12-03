@@ -676,15 +676,47 @@ class DWSIMClient:
                 if composition:
                     total = sum(composition.values())
                     if total > 0:
+                        composition_set = False
                         for comp, frac in composition.items():
                             normalized_frac = frac / total
                             # Try SetProp-style first; if not available, skip silently (some builds expose composition elsewhere)
-                            self._set_stream_prop(stream_obj, "molefraction", "overall", comp, "", "", normalized_frac)
+                            if self._set_stream_prop(stream_obj, "molefraction", "overall", comp, "", "", normalized_frac):
+                                composition_set = True
+                                logger.debug("Set composition for %s: %s = %f", stream_spec.id, comp, normalized_frac)
+                        
+                        if not composition_set:
+                            # Try alternative composition setting methods
+                            try:
+                                if hasattr(stream_obj, "SetOverallComposition"):
+                                    comp_dict = {comp: frac / total for comp, frac in composition.items()}
+                                    stream_obj.SetOverallComposition(comp_dict)
+                                    composition_set = True
+                                    logger.debug("Set composition via SetOverallComposition for %s", stream_spec.id)
+                            except Exception as e:
+                                logger.debug("SetOverallComposition failed: %s", e)
+                            
+                            if not composition_set:
+                                warnings.append(f"Stream {stream_spec.id}: Could not set composition")
                 
                 # Vapor fraction
                 vapor_frac = props.get("vapor_fraction")
                 if vapor_frac is not None:
                     self._set_stream_prop(stream_obj, "vaporfraction", "overall", None, "", "", vapor_frac)
+                
+                # Verify properties were set by reading them back
+                logger.debug("Verifying properties for stream: %s", stream_spec.id)
+                try:
+                    if temp is not None:
+                        # Try to read back temperature to verify it was set
+                        try:
+                            if hasattr(stream_obj, "GetProp"):
+                                read_temp = stream_obj.GetProp('temperature', 'overall', None, '', 'K')[0]
+                                if read_temp:
+                                    logger.debug("Verified temperature set: %f K (requested: %f K)", read_temp, temp + 273.15)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
                 
                 logger.debug("Created stream: %s", stream_spec.id)
             except Exception as exc:
@@ -1540,23 +1572,61 @@ class DWSIMClient:
                     if vapor_frac is None:
                         vapor_frac = getattr(stream, 'VaporFraction', None)
                     
-                    # Extract composition
+                    # Extract composition - try multiple methods
                     for comp in payload.thermo.components:
+                        comp_frac = None
                         try:
+                            # Method 1: GetProp with component name
                             if hasattr(stream, "GetProp"):
-                                comp_frac = stream.GetProp('molefraction', 'overall', comp, '', '')[0]
-                                if comp_frac is not None:
-                                    composition[comp] = float(comp_frac)
-                            elif hasattr(stream, "GetPropertyValue"):
-                                comp_frac = stream.GetPropertyValue(f"molefraction_{comp}")
-                                if comp_frac is not None:
-                                    composition[comp] = float(comp_frac)
-                        except Exception:
+                                try:
+                                    comp_frac = stream.GetProp('molefraction', 'overall', comp, '', '')[0]
+                                except Exception:
+                                    pass
+                            
+                            # Method 2: GetPropertyValue with component name
+                            if comp_frac is None and hasattr(stream, "GetPropertyValue"):
+                                try:
+                                    comp_frac = stream.GetPropertyValue(f"molefraction_{comp}")
+                                except Exception:
+                                    try:
+                                        comp_frac = stream.GetPropertyValue(f"MoleFraction_{comp}")
+                                    except Exception:
+                                        try:
+                                            comp_frac = stream.GetPropertyValue(comp)
+                                        except Exception:
+                                            pass
+                            
+                            # Method 3: GetOverallComposition if available
+                            if comp_frac is None and hasattr(stream, "GetOverallComposition"):
+                                try:
+                                    comp_dict = stream.GetOverallComposition()
+                                    if comp_dict and comp in comp_dict:
+                                        comp_frac = comp_dict[comp]
+                                except Exception:
+                                    pass
+                            
+                            # Method 4: Direct attribute access
+                            if comp_frac is None:
+                                try:
+                                    attr_name = f"MoleFraction_{comp}" if hasattr(stream, f"MoleFraction_{comp}") else None
+                                    if attr_name:
+                                        comp_frac = getattr(stream, attr_name)
+                                except Exception:
+                                    pass
+                            
+                            if comp_frac is not None:
+                                composition[comp] = float(comp_frac)
+                            else:
+                                composition[comp] = 0.0
+                                logger.debug("Could not read composition for component %s in stream %s", comp, payload_stream_id)
+                        except Exception as e:
                             composition[comp] = 0.0
+                            logger.debug("Error reading composition for %s: %s", comp, e)
                     
                     # If no composition found, initialize with zeros
                     if not composition:
                         composition = {comp: 0.0 for comp in payload.thermo.components}
+                        logger.debug("No composition data found for stream %s, using zeros", payload_stream_id)
 
                     # Normalize to numbers or None
                     t = _as_number(t)
