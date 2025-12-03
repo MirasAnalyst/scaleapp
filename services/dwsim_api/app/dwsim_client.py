@@ -447,7 +447,26 @@ class DWSIMClient:
                     # Try to read back what's actually in the stream
                     prop_info["has_getprop"] = hasattr(stream_obj, "GetProp")
                     prop_info["has_getpropertyvalue"] = hasattr(stream_obj, "GetPropertyValue")
+                    prop_info["has_setpropertyvalue"] = hasattr(stream_obj, "SetPropertyValue")
                     prop_info["stream_type"] = str(type(stream_obj))
+                    
+                    # Try to find MaterialStream in collections for comparison
+                    try:
+                        if hasattr(flowsheet, "MaterialStreams"):
+                            mat_streams = []
+                            for item in self._iterate_collection(flowsheet.MaterialStreams):
+                                item_name = getattr(item, "Name", None)
+                                if item_name == stream_spec.id:
+                                    mat_streams.append({
+                                        "name": item_name,
+                                        "type": str(type(item)),
+                                        "has_setprop": hasattr(item, "SetProp"),
+                                        "has_setpropertyvalue": hasattr(item, "SetPropertyValue"),
+                                    })
+                            if mat_streams:
+                                prop_info["materialstreams_collection_match"] = mat_streams
+                    except Exception as e:
+                        prop_info["materialstreams_collection_error"] = str(e)[:100]
                     
                     # Try GetProp
                     if hasattr(stream_obj, "GetProp"):
@@ -472,19 +491,32 @@ class DWSIMClient:
                         prop_info["pressure_read_back_kpa"] = None
                         prop_info["pressure_read_error"] = "GetProp not available"
                     
-                    # Try GetPropertyValue as alternative
+                    # Try GetPropertyValue as alternative - try multiple property name formats
                     if hasattr(stream_obj, "GetPropertyValue"):
-                        try:
-                            temp_gpv = stream_obj.GetPropertyValue("temperature")
-                            prop_info["temperature_getpropertyvalue"] = temp_gpv if temp_gpv is not None else None
-                        except Exception as e:
-                            prop_info["temperature_getpropertyvalue"] = f"error: {str(e)[:50]}"
+                        # Try different property name formats
+                        prop_names_to_try = ["Temperature", "temperature", "T", "Temp", "TemperatureK"]
+                        temp_gpv_result = None
+                        for prop_name in prop_names_to_try:
+                            try:
+                                temp_gpv = stream_obj.GetPropertyValue(prop_name)
+                                if temp_gpv and temp_gpv != "":
+                                    temp_gpv_result = f"{prop_name}={temp_gpv}"
+                                    break
+                            except Exception:
+                                continue
+                        prop_info["temperature_getpropertyvalue"] = temp_gpv_result if temp_gpv_result else ""
                         
-                        try:
-                            press_gpv = stream_obj.GetPropertyValue("pressure")
-                            prop_info["pressure_getpropertyvalue"] = press_gpv if press_gpv is not None else None
-                        except Exception as e:
-                            prop_info["pressure_getpropertyvalue"] = f"error: {str(e)[:50]}"
+                        prop_names_to_try = ["Pressure", "pressure", "P", "PressureKPa"]
+                        press_gpv_result = None
+                        for prop_name in prop_names_to_try:
+                            try:
+                                press_gpv = stream_obj.GetPropertyValue(prop_name)
+                                if press_gpv and press_gpv != "":
+                                    press_gpv_result = f"{prop_name}={press_gpv}"
+                                    break
+                            except Exception:
+                                continue
+                        prop_info["pressure_getpropertyvalue"] = press_gpv_result if press_gpv_result else ""
                     
                     property_diagnostics[stream_spec.id] = prop_info
             
@@ -728,8 +760,29 @@ class DWSIMClient:
                 continue
             
             try:
-                # If the object we got lacks SetProp, try to resolve the real MaterialStream from collections
+                # CRITICAL: Resolve to actual MaterialStream before setting properties
+                # The object returned from AddFlowsheetObject might be ISimulationObject interface
+                # We need the actual MaterialStream to set properties
+                original_obj = stream_obj
                 stream_obj = self._resolve_stream_object(flowsheet, stream_name, stream_obj)
+                
+                # If resolution didn't help, try to find by iterating MaterialStreams collection
+                if str(type(stream_obj)).lower() == str(type(original_obj)).lower() and "isimulationobject" in str(type(stream_obj)).lower():
+                    logger.debug("Still have ISimulationObject after resolution, trying direct MaterialStreams lookup")
+                    try:
+                        if hasattr(flowsheet, "MaterialStreams"):
+                            for item in self._iterate_collection(flowsheet.MaterialStreams):
+                                item_name = getattr(item, "Name", None)
+                                item_tag = getattr(getattr(item, "GraphicObject", None), "Tag", None)
+                                if item_name == stream_name or item_tag == stream_name:
+                                    item_type = str(type(item)).lower()
+                                    if "materialstream" in item_type:
+                                        stream_obj = item
+                                        logger.debug("Found MaterialStream via direct lookup: %s", stream_name)
+                                        break
+                    except Exception as e:
+                        logger.debug("Direct MaterialStreams lookup failed: %s", e)
+                
                 stream_map[stream_spec.id] = stream_obj
                 
                 # Set the stream name/tag so we can find it later during extraction
@@ -740,6 +793,38 @@ class DWSIMClient:
                         stream_obj.GraphicObject.Tag = stream_name
                 except Exception:
                     logger.debug("Could not set name/tag for stream %s", stream_name)
+                
+                # Log the final stream type we'll use for property setting
+                final_type = str(type(stream_obj))
+                logger.debug("Stream %s final type: %s (has SetProp: %s, has SetPropertyValue: %s)", 
+                           stream_spec.id, final_type, 
+                           hasattr(stream_obj, "SetProp"), 
+                           hasattr(stream_obj, "SetPropertyValue"))
+                
+                # CRITICAL: If we still have ISimulationObject, try one more time to get MaterialStream
+                # by looking it up in MaterialStreams collection right after creation
+                if "isimulationobject" in final_type.lower() and "materialstream" not in final_type.lower():
+                    logger.warning("Stream %s is still ISimulationObject, attempting MaterialStream lookup from collection", stream_spec.id)
+                    try:
+                        if hasattr(flowsheet, "MaterialStreams"):
+                            # Get all streams and find the one we just created
+                            all_streams = list(self._iterate_collection(flowsheet.MaterialStreams))
+                            logger.debug("Found %d streams in MaterialStreams collection", len(all_streams))
+                            
+                            # Try to match by name or take the last one (most recently created)
+                            for item in reversed(all_streams):  # Check newest first
+                                item_type = str(type(item)).lower()
+                                item_name = getattr(item, "Name", None)
+                                
+                                # Prefer MaterialStream type
+                                if "materialstream" in item_type and "isimulationobject" not in item_type:
+                                    if item_name == stream_name or not item_name:
+                                        stream_obj = item
+                                        logger.info("Resolved to MaterialStream: %s (type: %s)", stream_spec.id, type(item).__name__)
+                                        stream_map[stream_spec.id] = stream_obj  # Update the map
+                                        break
+                    except Exception as e:
+                        logger.warning("MaterialStream collection lookup failed: %s", e)
                 
                 # Set stream properties
                 props = stream_spec.properties or {}
