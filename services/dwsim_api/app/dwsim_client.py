@@ -381,7 +381,7 @@ class DWSIMClient:
             
             # Step 8: Extract results
             stream_results = self._extract_streams(flowsheet, payload)
-            unit_results = self._extract_units(flowsheet)
+            unit_results = self._extract_units(flowsheet, payload)
             
             return schemas.SimulationResult(
                 flowsheet_name=payload.name,
@@ -397,7 +397,7 @@ class DWSIMClient:
             # Return partial results if available
             try:
                 stream_results = self._extract_streams(flowsheet, payload)
-                unit_results = self._extract_units(flowsheet)
+                unit_results = self._extract_units(flowsheet, payload)
                 return schemas.SimulationResult(
                     flowsheet_name=payload.name,
                     status="error",
@@ -794,6 +794,18 @@ class DWSIMClient:
                 continue
             
             try:
+                # Resolve the actual unit object (might need to get from collection)
+                unit_obj = self._resolve_unit_object(flowsheet, unit_spec.id, unit_obj)
+                
+                # Set the unit name/tag so we can find it later during extraction
+                try:
+                    if hasattr(unit_obj, "Name"):
+                        unit_obj.Name = unit_spec.id
+                    elif hasattr(unit_obj, "GraphicObject") and hasattr(unit_obj.GraphicObject, "Tag"):
+                        unit_obj.GraphicObject.Tag = unit_spec.id
+                except Exception:
+                    logger.debug("Could not set name/tag for unit %s", unit_spec.id)
+                
                 unit_map[unit_spec.id] = unit_obj
                 logger.debug("Created unit: %s (type: %s)", unit_spec.id, dwsim_type)
             except Exception as exc:
@@ -814,15 +826,43 @@ class DWSIMClient:
             if stream_spec.target:
                 target_unit = unit_map.get(stream_spec.target)
                 if target_unit:
-                    try:
-                        # Map port handles to DWSIM port indices
-                        # Handle missing targetHandle gracefully (use default port 0)
-                        target_handle = getattr(stream_spec, 'targetHandle', None)
-                        port = self._map_port_to_index(target_handle, stream_spec.target)
-                        target_unit.SetInletStream(port, stream_obj)
-                        logger.debug("Connected stream %s to unit %s (port %s)", stream_spec.id, stream_spec.target, port)
-                    except Exception as exc:
-                        warnings.append(f"Failed to connect stream '{stream_spec.id}' to unit '{stream_spec.target}': {str(exc)}")
+                    # Resolve the actual unit object (might need to get from collection)
+                    target_unit = self._resolve_unit_object(flowsheet, stream_spec.target, target_unit)
+                    
+                    # Handle missing targetHandle gracefully (use default port 0)
+                    target_handle = getattr(stream_spec, 'targetHandle', None)
+                    port = self._map_port_to_index(target_handle, stream_spec.target)
+                    
+                    # Try multiple connection methods
+                    connected = False
+                    connection_methods = [
+                        ("SetInletStream", lambda: target_unit.SetInletStream(port, stream_obj)),
+                        ("SetInletMaterialStream", lambda: target_unit.SetInletMaterialStream(port, stream_obj)),
+                        ("ConnectInlet", lambda: target_unit.ConnectInlet(port, stream_obj)),
+                        ("AddInletStream", lambda: target_unit.AddInletStream(port, stream_obj)),
+                        ("InletStreams[index]", lambda: setattr(target_unit, f"InletStreams[{port}]", stream_obj) if hasattr(target_unit, "InletStreams") else None),
+                        ("InletMaterialStreams[index]", lambda: setattr(target_unit, f"InletMaterialStreams[{port}]", stream_obj) if hasattr(target_unit, "InletMaterialStreams") else None),
+                        # Try without port index
+                        ("SetInletStream(no port)", lambda: target_unit.SetInletStream(stream_obj) if hasattr(target_unit, "SetInletStream") else None),
+                        ("SetInletMaterialStream(no port)", lambda: target_unit.SetInletMaterialStream(stream_obj) if hasattr(target_unit, "SetInletMaterialStream") else None),
+                    ]
+                    
+                    for method_name, method in connection_methods:
+                        try:
+                            result = method()
+                            if result is not None or not hasattr(method, '__call__'):
+                                logger.debug("Connected stream %s to unit %s via %s (port %s)", stream_spec.id, stream_spec.target, method_name, port)
+                                connected = True
+                                break
+                        except (AttributeError, TypeError) as e:
+                            logger.debug("Connection method %s failed: %s", method_name, e)
+                            continue
+                        except Exception as e:
+                            logger.debug("Connection method %s error: %s", method_name, e)
+                            continue
+                    
+                    if not connected:
+                        warnings.append(f"Failed to connect stream '{stream_spec.id}' to unit '{stream_spec.target}' - tried all connection methods")
                 else:
                     warnings.append(f"Target unit '{stream_spec.target}' not found for stream '{stream_spec.id}'")
             
@@ -830,14 +870,43 @@ class DWSIMClient:
             if stream_spec.source:
                 source_unit = unit_map.get(stream_spec.source)
                 if source_unit:
-                    try:
-                        # Handle missing sourceHandle gracefully (use default port 0)
-                        source_handle = getattr(stream_spec, 'sourceHandle', None)
-                        port = self._map_port_to_index(source_handle, stream_spec.source)
-                        source_unit.SetOutletStream(port, stream_obj)
-                        logger.debug("Connected stream %s from unit %s (port %s)", stream_spec.id, stream_spec.source, port)
-                    except Exception as exc:
-                        warnings.append(f"Failed to connect stream '{stream_spec.id}' from unit '{stream_spec.source}': {str(exc)}")
+                    # Resolve the actual unit object
+                    source_unit = self._resolve_unit_object(flowsheet, stream_spec.source, source_unit)
+                    
+                    # Handle missing sourceHandle gracefully (use default port 0)
+                    source_handle = getattr(stream_spec, 'sourceHandle', None)
+                    port = self._map_port_to_index(source_handle, stream_spec.source)
+                    
+                    # Try multiple connection methods
+                    connected = False
+                    connection_methods = [
+                        ("SetOutletStream", lambda: source_unit.SetOutletStream(port, stream_obj)),
+                        ("SetOutletMaterialStream", lambda: source_unit.SetOutletMaterialStream(port, stream_obj)),
+                        ("ConnectOutlet", lambda: source_unit.ConnectOutlet(port, stream_obj)),
+                        ("AddOutletStream", lambda: source_unit.AddOutletStream(port, stream_obj)),
+                        ("OutletStreams[index]", lambda: setattr(source_unit, f"OutletStreams[{port}]", stream_obj) if hasattr(source_unit, "OutletStreams") else None),
+                        ("OutletMaterialStreams[index]", lambda: setattr(source_unit, f"OutletMaterialStreams[{port}]", stream_obj) if hasattr(source_unit, "OutletMaterialStreams") else None),
+                        # Try without port index
+                        ("SetOutletStream(no port)", lambda: source_unit.SetOutletStream(stream_obj) if hasattr(source_unit, "SetOutletStream") else None),
+                        ("SetOutletMaterialStream(no port)", lambda: source_unit.SetOutletMaterialStream(stream_obj) if hasattr(source_unit, "SetOutletMaterialStream") else None),
+                    ]
+                    
+                    for method_name, method in connection_methods:
+                        try:
+                            result = method()
+                            if result is not None or not hasattr(method, '__call__'):
+                                logger.debug("Connected stream %s from unit %s via %s (port %s)", stream_spec.id, stream_spec.source, method_name, port)
+                                connected = True
+                                break
+                        except (AttributeError, TypeError) as e:
+                            logger.debug("Connection method %s failed: %s", method_name, e)
+                            continue
+                        except Exception as e:
+                            logger.debug("Connection method %s error: %s", method_name, e)
+                            continue
+                    
+                    if not connected:
+                        warnings.append(f"Failed to connect stream '{stream_spec.id}' from unit '{stream_spec.source}' - tried all connection methods")
                 else:
                     warnings.append(f"Source unit '{stream_spec.source}' not found for stream '{stream_spec.id}'")
             
@@ -1345,9 +1414,13 @@ class DWSIMClient:
             logger.warning("Failed to extract DWSIM streams: %s", exc)
         return results
 
-    def _extract_units(self, flowsheet) -> List[schemas.UnitResult]:  # pragma: no cover
+    def _extract_units(self, flowsheet, payload: schemas.FlowsheetPayload = None) -> List[schemas.UnitResult]:  # pragma: no cover
         results: List[schemas.UnitResult] = []
         units = None
+        
+        # Create a map of unit IDs from payload for matching
+        payload_unit_ids = {u.id: u for u in payload.units} if payload else {}
+        payload_unit_names = {u.name: u for u in payload.units if u.name} if payload else {}
         
         # Try multiple methods to get units
         try:
@@ -1386,21 +1459,71 @@ class DWSIMClient:
             except Exception:
                 unit_list = [units]
             
+            # Map DWSIM units to payload unit IDs
+            unit_id_map = {}  # Maps DWSIM unit object -> payload unit ID
+            
             for unit in unit_list:
                 try:
-                    unit_id = self._name_or_tag(unit, "unit")
+                    unit_name = self._name_or_tag(unit, "unit")
                     type_str = str(type(unit)).lower()
-                    if "stream" in type_str:
-                        continue  # skip streams in SimulationObjects
+                    
+                    # Skip streams
+                    if "stream" in type_str or "material" in type_str:
+                        continue
+                    
+                    # Check if this unit matches any payload unit by ID or name
+                    matched_id = None
+                    if payload_unit_ids:
+                        if unit_name in payload_unit_ids:
+                            matched_id = unit_name
+                        elif unit_name in payload_unit_names:
+                            matched_id = payload_unit_names[unit_name].id
+                        else:
+                            # Try to match by checking if unit name contains payload ID
+                            for payload_id, payload_unit in payload_unit_ids.items():
+                                if payload_id in str(unit_name) or str(unit_name) in payload_id:
+                                    matched_id = payload_id
+                                    break
+                    
+                    # If we have payload, only process matched units; otherwise process all
+                    if matched_id or not payload_unit_ids:
+                        unit_id_map[unit] = matched_id or unit_name
+                except Exception:
+                    logger.debug("Error checking unit name, skipping")
+                    continue
+            
+            # Extract properties only for matched units (or all if no payload)
+            for unit, payload_unit_id in unit_id_map.items():
+                try:
                     try:
                         duty = getattr(unit, 'DeltaQ', 0)
                     except Exception:
                         try:
                             duty = getattr(unit, 'HeatFlow', 0)
                         except Exception:
-                            duty = 0
+                            try:
+                                # Try GetProp for duty
+                                if hasattr(unit, 'GetProp'):
+                                    duty_result = unit.GetProp('HeatFlow', 'overall', None, '', 'kW')
+                                    duty = duty_result[0] if duty_result and len(duty_result) > 0 else 0
+                                else:
+                                    duty = 0
+                            except Exception:
+                                duty = 0
                     
-                    results.append(schemas.UnitResult(id=str(unit_id), duty_kw=duty, status='ok'))
+                    # Normalize duty to float
+                    if duty is None:
+                        duty = 0.0
+                    try:
+                        duty = float(duty)
+                    except (ValueError, TypeError):
+                        duty = 0.0
+                    
+                    results.append(schemas.UnitResult(
+                        id=payload_unit_id,  # Use payload ID if available
+                        duty_kw=duty,
+                        status='ok'
+                    ))
                 except Exception as item_exc:
                     logger.debug("Skipping unit extraction due to error: %s", item_exc)
         except Exception as exc:
