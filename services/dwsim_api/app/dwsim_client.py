@@ -1157,7 +1157,23 @@ class DWSIMClient:
                     stream_list = [sim_objects] if sim_objects else []
             except Exception:
                 stream_list = [sim_objects]
-            
+
+            def _as_number(val):
+                """Return a float if val looks numeric; otherwise None."""
+                if val is None:
+                    return None
+                if isinstance(val, (int, float)):
+                    return float(val)
+                if isinstance(val, str):
+                    stripped = val.strip()
+                    if stripped == "":
+                        return None
+                    try:
+                        return float(stripped)
+                    except ValueError:
+                        return None
+                return None
+
             for stream in stream_list:
                 try:
                     stream_id = self._name_or_tag(stream, "stream")
@@ -1218,6 +1234,11 @@ class DWSIMClient:
                                 flow = flow_attr * 3600 if flow_attr < 1e3 else flow_attr  # if already kg/h keep as is
                     except Exception:
                         t = p = flow = None
+
+                    # Normalize to numbers or None (avoid empty strings triggering pydantic errors)
+                    t = _as_number(t)
+                    p = _as_number(p)
+                    flow = _as_number(flow)
 
                     results.append(
                         schemas.StreamResult(
