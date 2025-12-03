@@ -1379,7 +1379,37 @@ class DWSIMClient:
     def _set_stream_prop(self, stream_obj, prop_name, phase, comp, basis, unit, value) -> bool:
         """Attempt to set a property on a stream object using multiple APIs."""
         setters = []
-        # Canonical method names
+        
+        # For ISimulationObject, try SetPropertyValue first (this is the interface method)
+        stream_type_str = str(type(stream_obj)).lower()
+        if "isimulationobject" in stream_type_str:
+            if hasattr(stream_obj, "SetPropertyValue"):
+                # SetPropertyValue signature: SetPropertyValue(property, value)
+                prop_map = {
+                    "temperature": "Temperature",
+                    "pressure": "Pressure", 
+                    "totalflow": "MassFlow",
+                    "molefraction": "MoleFraction",
+                    "vaporfraction": "VaporFraction"
+                }
+                prop_key = prop_map.get(prop_name.lower(), prop_name)
+                
+                # Try SetPropertyValue with different property name formats (prioritize these)
+                # Insert at beginning so they're tried first
+                setters.insert(0, lambda: stream_obj.SetPropertyValue(prop_key, value))
+                setters.insert(1, lambda: stream_obj.SetPropertyValue(prop_name.title(), value))
+                setters.insert(2, lambda: stream_obj.SetPropertyValue(prop_name, value))
+                
+                # Also try with "Prop" suffix
+                setters.insert(3, lambda: stream_obj.SetPropertyValue(f"{prop_key}Prop", value))
+                
+                # If it's composition, try SetPropertyValue with component
+                if prop_name.lower() == "molefraction" and comp:
+                    setters.insert(4, lambda c=comp, v=value: stream_obj.SetPropertyValue(f"MoleFraction_{c}", v))
+                    setters.insert(5, lambda c=comp, v=value: stream_obj.SetPropertyValue(f"{c}_MoleFraction", v))
+                    setters.insert(6, lambda c=comp, v=value: stream_obj.SetPropertyValue(f"{c}.MoleFraction", v))
+        
+        # Canonical method names (SetProp - usually on MaterialStream, not ISimulationObject)
         if hasattr(stream_obj, "SetProp"):
             setters.append(lambda: stream_obj.SetProp(prop_name, phase, comp, basis, unit, value))
         for meth in ("SetPropertyValue", "SetPropertyValue2"):
@@ -1400,46 +1430,79 @@ class DWSIMClient:
             if hasattr(stream_obj, attr):
                 setters.append(lambda a=attr: setattr(stream_obj, a, value))
 
-        for setter in setters:
+        for idx, setter in enumerate(setters):
             try:
                 setter()
+                logger.debug("Successfully set property '%s' using method %d (value: %s)", prop_name, idx, value)
                 return True
-            except Exception:
+            except Exception as e:
+                logger.debug("Property setter %d failed for '%s': %s", idx, prop_name, str(e)[:100])
                 continue
+        logger.warning("All property setters failed for '%s' (value: %s, stream type: %s)", prop_name, value, type(stream_obj).__name__)
         return False
 
     def _resolve_stream_object(self, flowsheet, stream_name: str, stream_obj):
         """If the returned object lacks SetProp, resolve the actual MaterialStream from collections."""
-        if hasattr(stream_obj, "SetProp") or hasattr(stream_obj, "SetPropertyValue") or hasattr(stream_obj, "SetPropertyValue2"):
-            return stream_obj
+        # Check if current object is already a MaterialStream (not just ISimulationObject)
+        stream_type_str = str(type(stream_obj)).lower()
+        if "materialstream" in stream_type_str and not "isimulationobject" in stream_type_str:
+            if hasattr(stream_obj, "SetProp") or hasattr(stream_obj, "SetPropertyValue"):
+                logger.debug("Stream '%s' is already a MaterialStream with SetProp", stream_name)
+                return stream_obj
+        
+        # If it's ISimulationObject, we need to find the actual MaterialStream
         for attr in ["MaterialStreams", "SimulationObjects"]:
             coll = getattr(flowsheet, attr, None)
             if coll is None:
                 continue
-            # Try direct lookup by key
+            
+            # Try direct lookup by key/name
             candidate = self._get_collection_item(coll, stream_name)
-            if candidate and hasattr(candidate, "SetProp"):
-                logger.debug("Resolved stream '%s' via %s collection to object with SetProp", stream_name, attr)
-                return candidate
+            if candidate:
+                cand_type = str(type(candidate)).lower()
+                # Prefer MaterialStream over ISimulationObject
+                if "materialstream" in cand_type and not "isimulationobject" in cand_type:
+                    if hasattr(candidate, "SetProp") or hasattr(candidate, "SetPropertyValue"):
+                        logger.debug("Resolved stream '%s' via %s collection to MaterialStream", stream_name, attr)
+                        return candidate
+            
             # Try name/tag matching over all items
             for item in self._iterate_collection(coll):
+                item_type = str(type(item)).lower()
                 name = getattr(item, "Name", None)
                 tag = getattr(getattr(item, "GraphicObject", None), "Tag", None)
                 if name == stream_name or tag == stream_name:
-                    if hasattr(item, "SetProp") or "stream" in str(type(item)).lower():
+                    # Prefer MaterialStream over ISimulationObject
+                    if "materialstream" in item_type and not "isimulationobject" in item_type:
+                        if hasattr(item, "SetProp") or hasattr(item, "SetPropertyValue"):
+                            logger.debug("Resolved stream '%s' via %s collection (name/tag match to MaterialStream)", stream_name, attr)
+                            return item
+                    elif hasattr(item, "SetProp") or "stream" in item_type:
                         logger.debug("Resolved stream '%s' via %s collection (name/tag match)", stream_name, attr)
                         return item
+            
+            # Fallback: first MaterialStream with SetProp
+            for item in self._iterate_collection(coll):
+                item_type = str(type(item)).lower()
+                if "materialstream" in item_type and not "isimulationobject" in item_type:
+                    if hasattr(item, "SetProp") or hasattr(item, "SetPropertyValue"):
+                        logger.debug("Resolved stream '%s' via %s collection (first MaterialStream)", stream_name, attr)
+                        return item
+            
             # Fallback: first item with SetProp
             for item in self._iterate_collection(coll):
                 if hasattr(item, "SetProp"):
                     logger.debug("Resolved stream '%s' via %s collection (first SetProp)", stream_name, attr)
                     return item
+            
             # Fallback: first item whose type looks like a stream
             for item in self._iterate_collection(coll):
-                if "stream" in str(type(item)).lower():
+                item_type = str(type(item)).lower()
+                if "materialstream" in item_type or ("stream" in item_type and "isimulationobject" not in item_type):
                     logger.debug("Resolved stream '%s' via %s collection (type contains 'stream')", stream_name, attr)
                     return item
-        logger.debug("Stream '%s' has no SetProp and no resolvable collection target", stream_name)
+        
+        logger.debug("Stream '%s' could not be resolved to MaterialStream, using original object", stream_name)
         return stream_obj
 
     def _resolve_unit_object(self, flowsheet, unit_name: str, unit_obj):
