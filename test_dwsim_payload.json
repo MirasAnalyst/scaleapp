@@ -1,0 +1,37 @@
+{
+  "name": "test-flowsheet-with-feed",
+  "units": [
+    {
+      "id": "MAT-1",
+      "type": "separator",
+      "name": "Test Separator",
+      "parameters": {}
+    }
+  ],
+  "streams": [
+    {
+      "id": "BB-feed",
+      "name": "Feed Stream",
+      "target": "MAT-1",
+      "properties": {
+        "temperature": 25,
+        "pressure": 101.3,
+        "flow_rate": 1000,
+        "composition": {
+          "Water": 1.0
+        }
+      }
+    },
+    {
+      "id": "BB-product",
+      "name": "Product Stream",
+      "source": "MAT-1",
+      "properties": {}
+    }
+  ],
+  "thermo": {
+    "package": "Peng-Robinson",
+    "components": ["Water"]
+  }
+}
+
