@@ -877,7 +877,6 @@ class DWSIMClient:
                         logger.info("✓ Set temperature for %s: %f C", stream_spec.id, temp)
                     else:
                         logger.error("✗ Failed to set temperature for %s", stream_spec.id)
-                    else:
                         warnings.append(f"Stream {stream_spec.id}: Could not set temperature")
                         logger.warning("Failed to set temperature for stream %s using all methods", stream_spec.id)
                 
