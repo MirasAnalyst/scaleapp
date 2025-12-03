@@ -1228,10 +1228,10 @@ class DWSIMClient:
                             composition={comp: 0 for comp in payload.thermo.components},
                         )
                     )
-                except Exception as item_exc:
-                    logger.debug("Skipping stream extraction due to error: %s", item_exc)
+                except Exception:
+                    logger.exception("Skipping stream extraction due to error")
         except Exception as exc:
-            logger.warning("Failed to extract DWSIM streams: %s", exc)
+            logger.warning("Failed to extract DWSIM streams: {}", exc)
         return results
 
     def _extract_units(self, flowsheet) -> List[schemas.UnitResult]:  # pragma: no cover
