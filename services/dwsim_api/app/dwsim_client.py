@@ -388,10 +388,34 @@ class DWSIMClient:
                 logger.info("Attempting alternative connection methods via flowsheet...")
                 self._try_flowsheet_connections(flowsheet, payload.streams, stream_map, unit_map, warnings)
             
-            # Step 8: Run simulation (DWSIM may infer connections from stream properties and unit config)
+            # Step 8: Verify stream properties before calculation
+            logger.info("=== Pre-calculation Stream Property Verification ===")
+            for stream_spec in payload.streams:
+                stream_obj = stream_map.get(stream_spec.id)
+                if stream_obj:
+                    try:
+                        # Try to read back properties we set
+                        if hasattr(stream_obj, "GetProp"):
+                            try:
+                                temp = stream_obj.GetProp('temperature', 'overall', None, '', 'K')
+                                if temp and len(temp) > 0:
+                                    logger.info("Stream %s: Temperature = %f K (after setting)", stream_spec.id, temp[0])
+                                else:
+                                    logger.warning("Stream %s: Temperature not readable (may not have been set)", stream_spec.id)
+                            except Exception as e:
+                                logger.debug("Stream %s: Could not read temperature: %s", stream_spec.id, e)
+                    except Exception as e:
+                        logger.debug("Error verifying stream %s: %s", stream_spec.id, e)
+            
+            # Step 9: Run simulation (DWSIM may infer connections from stream properties and unit config)
             logger.info("Running DWSIM simulation for flowsheet: %s", payload.name)
             logger.info("Note: If connections failed, DWSIM may infer them from stream properties and unit configuration")
-            self._automation.CalculateFlowsheet(flowsheet, None)
+            try:
+                self._automation.CalculateFlowsheet(flowsheet, None)
+                logger.info("CalculateFlowsheet completed")
+            except Exception as calc_exc:
+                logger.error("CalculateFlowsheet failed: %s", calc_exc)
+                warnings.append(f"Calculation error: {str(calc_exc)}")
             
             # Step 9: Extract results
             stream_results = self._extract_streams(flowsheet, payload)
@@ -1439,6 +1463,35 @@ class DWSIMClient:
             logger.warning("Could not retrieve streams from flowsheet")
             return results
         
+        # Diagnostic: Log all streams found in flowsheet for debugging
+        logger.info("=== Stream Extraction Diagnostics ===")
+        logger.info("Payload streams: %s", [s.id for s in payload.streams])
+        try:
+            all_streams = []
+            if hasattr(sim_objects, '__iter__') and not isinstance(sim_objects, str):
+                for item in self._iterate_collection(sim_objects):
+                    all_streams.append(item)
+            else:
+                all_streams = [sim_objects] if sim_objects else []
+            
+            logger.info("Found %d streams in flowsheet", len(all_streams))
+            for idx, stream in enumerate(all_streams):
+                try:
+                    stream_name = self._name_or_tag(stream, f"stream_{idx}")
+                    logger.info("  Stream %d: name='%s', type=%s", idx, stream_name, type(stream).__name__)
+                    # Try to read a property to see if it has values
+                    try:
+                        if hasattr(stream, "GetProp"):
+                            temp = stream.GetProp('temperature', 'overall', None, '', 'K')
+                            if temp and len(temp) > 0 and temp[0]:
+                                logger.info("    Temperature: %f K", temp[0])
+                    except Exception:
+                        pass
+                except Exception as e:
+                    logger.debug("Error inspecting stream %d: %s", idx, e)
+        except Exception as e:
+            logger.debug("Error in stream diagnostics: %s", e)
+        
         try:
             # Handle both iterable collections and single objects
             stream_list = []
@@ -1508,6 +1561,12 @@ class DWSIMClient:
                     logger.debug("Error checking stream name, skipping")
                     continue
 
+            # Log matching results
+            logger.info("Matched %d streams: %s", len(stream_id_map), list(stream_id_map.values()))
+            if len(stream_id_map) == 0:
+                logger.warning("No streams matched! Available stream names: %s", 
+                             [self._name_or_tag(s, "unknown") for s in stream_list[:10]])
+            
             # Extract properties only for matched streams
             for stream, payload_stream_id in stream_id_map.items():
                 try:
