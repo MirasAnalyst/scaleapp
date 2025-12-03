@@ -454,17 +454,28 @@ class DWSIMClient:
                     try:
                         if hasattr(flowsheet, "MaterialStreams"):
                             mat_streams = []
+                            all_streams_info = []
                             for item in self._iterate_collection(flowsheet.MaterialStreams):
                                 item_name = getattr(item, "Name", None)
+                                item_type = str(type(item))
+                                all_streams_info.append({
+                                    "name": item_name,
+                                    "type": item_type,
+                                    "has_setprop": hasattr(item, "SetProp"),
+                                    "has_setpropertyvalue": hasattr(item, "SetPropertyValue"),
+                                })
                                 if item_name == stream_spec.id:
                                     mat_streams.append({
                                         "name": item_name,
-                                        "type": str(type(item)),
+                                        "type": item_type,
                                         "has_setprop": hasattr(item, "SetProp"),
                                         "has_setpropertyvalue": hasattr(item, "SetPropertyValue"),
                                     })
+                            prop_info["all_materialstreams_in_collection"] = all_streams_info
                             if mat_streams:
                                 prop_info["materialstreams_collection_match"] = mat_streams
+                            else:
+                                prop_info["materialstreams_collection_match"] = "No match found"
                     except Exception as e:
                         prop_info["materialstreams_collection_error"] = str(e)[:100]
                     
@@ -1469,7 +1480,7 @@ class DWSIMClient:
         stream_type_str = str(type(stream_obj)).lower()
         if "isimulationobject" in stream_type_str:
             if hasattr(stream_obj, "SetPropertyValue"):
-                # SetPropertyValue signature: SetPropertyValue(property, value)
+                # SetPropertyValue signature might be: SetPropertyValue(property, value) or SetPropertyValue(property, phase, value)
                 prop_map = {
                     "temperature": "Temperature",
                     "pressure": "Pressure", 
@@ -1479,20 +1490,28 @@ class DWSIMClient:
                 }
                 prop_key = prop_map.get(prop_name.lower(), prop_name)
                 
-                # Try SetPropertyValue with different property name formats (prioritize these)
+                # Try SetPropertyValue with different signatures and property name formats (prioritize these)
                 # Insert at beginning so they're tried first
                 setters.insert(0, lambda: stream_obj.SetPropertyValue(prop_key, value))
                 setters.insert(1, lambda: stream_obj.SetPropertyValue(prop_name.title(), value))
                 setters.insert(2, lambda: stream_obj.SetPropertyValue(prop_name, value))
                 
+                # Try with phase parameter (if SetPropertyValue takes phase)
+                if phase:
+                    setters.insert(3, lambda: stream_obj.SetPropertyValue(prop_key, phase, value) if len(stream_obj.SetPropertyValue.__code__.co_argnames) >= 3 else None)
+                    setters.insert(4, lambda: stream_obj.SetPropertyValue(prop_name.title(), phase, value) if len(stream_obj.SetPropertyValue.__code__.co_argnames) >= 3 else None)
+                
                 # Also try with "Prop" suffix
-                setters.insert(3, lambda: stream_obj.SetPropertyValue(f"{prop_key}Prop", value))
+                setters.insert(5, lambda: stream_obj.SetPropertyValue(f"{prop_key}Prop", value))
                 
                 # If it's composition, try SetPropertyValue with component
                 if prop_name.lower() == "molefraction" and comp:
-                    setters.insert(4, lambda c=comp, v=value: stream_obj.SetPropertyValue(f"MoleFraction_{c}", v))
-                    setters.insert(5, lambda c=comp, v=value: stream_obj.SetPropertyValue(f"{c}_MoleFraction", v))
-                    setters.insert(6, lambda c=comp, v=value: stream_obj.SetPropertyValue(f"{c}.MoleFraction", v))
+                    setters.insert(6, lambda c=comp, v=value: stream_obj.SetPropertyValue(f"MoleFraction_{c}", v))
+                    setters.insert(7, lambda c=comp, v=value: stream_obj.SetPropertyValue(f"{c}_MoleFraction", v))
+                    setters.insert(8, lambda c=comp, v=value: stream_obj.SetPropertyValue(f"{c}.MoleFraction", v))
+                    # Try with phase and component
+                    if phase:
+                        setters.insert(9, lambda c=comp, v=value, p=phase: stream_obj.SetPropertyValue(f"MoleFraction_{c}", p, v) if len(stream_obj.SetPropertyValue.__code__.co_argnames) >= 3 else None)
         
         # Canonical method names (SetProp - usually on MaterialStream, not ISimulationObject)
         if hasattr(stream_obj, "SetProp"):
