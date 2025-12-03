@@ -450,8 +450,20 @@ class DWSIMClient:
                     prop_info["has_getpropertyvalue"] = hasattr(stream_obj, "GetPropertyValue")
                     prop_info["has_setpropertyvalue"] = hasattr(stream_obj, "SetPropertyValue")
                     prop_info["stream_type"] = str(type(stream_obj))
+                    prop_info["dotnet_type"] = self._get_dotnet_type(stream_obj)
                     
                     # If we don't have SetProp, try to re-resolve from collection
+                    if not hasattr(stream_obj, "SetProp"):
+                        cast_stream = self._as_material_stream(stream_obj)
+                        if cast_stream and hasattr(cast_stream, "SetProp"):
+                            stream_obj = cast_stream
+                            stream_map[stream_spec.id] = stream_obj
+                            prop_info["has_setprop"] = True
+                            prop_info["has_getprop"] = hasattr(stream_obj, "GetProp")
+                            prop_info["stream_type"] = str(type(stream_obj))
+                            prop_info["dotnet_type"] = self._get_dotnet_type(stream_obj)
+                            logger.info("Diagnostics: Casted stream %s to MaterialStream for diagnostics", stream_spec.id)
+                    
                     if not hasattr(stream_obj, "SetProp"):
                         logger.warning("Diagnostics: Stream %s doesn't have SetProp, attempting re-resolution", stream_spec.id)
                         try:
@@ -460,14 +472,16 @@ class DWSIMClient:
                                 for item in reversed(all_streams):
                                     item_name = getattr(item, "Name", None)
                                     item_tag = getattr(getattr(item, "GraphicObject", None), "Tag", None)
-                                    if (item_name == stream_spec.id or item_tag == stream_spec.id) and hasattr(item, "SetProp"):
-                                        stream_obj = item
+                                    if item_name == stream_spec.id or item_tag == stream_spec.id:
+                                        resolved_item = self._as_material_stream(item) or item
+                                        stream_obj = resolved_item
                                         stream_map[stream_spec.id] = stream_obj  # Update map
-                                        logger.info("✓ Re-resolved stream %s to MaterialStream with SetProp during diagnostics", stream_spec.id)
+                                        logger.info("✓ Re-resolved stream %s to MaterialStream during diagnostics", stream_spec.id)
                                         # Update diagnostics with resolved object
                                         prop_info["has_setprop"] = True
                                         prop_info["has_getprop"] = hasattr(stream_obj, "GetProp")
                                         prop_info["stream_type"] = str(type(stream_obj))
+                                        prop_info["dotnet_type"] = self._get_dotnet_type(stream_obj)
                                         break
                         except Exception as e:
                             logger.debug("Re-resolution during diagnostics failed: %s", e)
@@ -480,9 +494,11 @@ class DWSIMClient:
                             for item in self._iterate_collection(flowsheet.MaterialStreams):
                                 item_name = getattr(item, "Name", None)
                                 item_type = str(type(item))
+                                dotnet_type = self._get_dotnet_type(item)
                                 all_streams_info.append({
                                     "name": item_name,
                                     "type": item_type,
+                                    "dotnet_type": dotnet_type,
                                     "has_setprop": hasattr(item, "SetProp"),
                                     "has_setpropertyvalue": hasattr(item, "SetPropertyValue"),
                                 })
@@ -490,6 +506,7 @@ class DWSIMClient:
                                     mat_streams.append({
                                         "name": item_name,
                                         "type": item_type,
+                                        "dotnet_type": dotnet_type,
                                         "has_setprop": hasattr(item, "SetProp"),
                                         "has_setpropertyvalue": hasattr(item, "SetPropertyValue"),
                                     })
@@ -827,10 +844,18 @@ class DWSIMClient:
                 except Exception:
                     logger.debug("Could not set name/tag for stream %s", stream_name)
                 
+                # Try to upgrade ISimulationObject to actual MaterialStream (cast exposes SetProp)
+                cast_stream = self._as_material_stream(stream_obj)
+                if cast_stream and cast_stream is not stream_obj:
+                    stream_obj = cast_stream
+                    stream_map[stream_spec.id] = stream_obj
+                    logger.info("✓ Casted stream %s to MaterialStream (SetProp available)", stream_spec.id)
+
                 # Log the final stream type we'll use for property setting
                 final_type = str(type(stream_obj))
-                logger.debug("Stream %s final type: %s (has SetProp: %s, has SetPropertyValue: %s)", 
-                           stream_spec.id, final_type, 
+                dotnet_type = self._get_dotnet_type(stream_obj)
+                logger.debug("Stream %s final type: %s (dotnet: %s, has SetProp: %s, has SetPropertyValue: %s)", 
+                           stream_spec.id, final_type, dotnet_type,
                            hasattr(stream_obj, "SetProp"), 
                            hasattr(stream_obj, "SetPropertyValue"))
                 
@@ -870,13 +895,15 @@ class DWSIMClient:
                             streams_with_setprop = []
                             for idx, item in enumerate(all_streams):
                                 item_type = str(type(item))
+                                dotnet_item_type = self._get_dotnet_type(item)
                                 item_name = getattr(item, "Name", None)
                                 item_tag = getattr(getattr(item, "GraphicObject", None), "Tag", None)
                                 has_setprop = hasattr(item, "SetProp")
-                                logger.info("Stream %d in collection: name='%s', tag='%s', type=%s, has_SetProp=%s", 
-                                           idx, item_name, item_tag, item_type, has_setprop)
-                                if has_setprop:
-                                    streams_with_setprop.append((idx, item, item_name, item_tag))
+                                logger.info("Stream %d in collection: name='%s', tag='%s', type=%s, dotnet_type=%s, has_SetProp=%s", 
+                                           idx, item_name, item_tag, item_type, dotnet_item_type, has_setprop)
+                                ms_candidate = self._as_material_stream(item)
+                                if ms_candidate and hasattr(ms_candidate, "SetProp"):
+                                    streams_with_setprop.append((idx, ms_candidate, item_name, item_tag))
                             
                             logger.info("Found %d streams with SetProp method", len(streams_with_setprop))
                             
@@ -906,7 +933,7 @@ class DWSIMClient:
                                 last_stream = all_streams[-1]
                                 logger.warning("No streams with SetProp found, trying last stream in collection: type=%s", type(last_stream).__name__)
                                 # Try to cast or use directly
-                                stream_obj = last_stream
+                                stream_obj = self._as_material_stream(last_stream) or last_stream
                                 stream_map[stream_spec.id] = stream_obj
                                 # Update name/tag to match
                                 try:
@@ -951,6 +978,14 @@ class DWSIMClient:
                                             pass
                         except Exception as e:
                             logger.debug("Dictionary access attempt failed: %s", e)
+
+                # Final attempt to expose SetProp via casting before setting properties
+                if not hasattr(stream_obj, "SetProp"):
+                    cast_stream = self._as_material_stream(stream_obj)
+                    if cast_stream and hasattr(cast_stream, "SetProp"):
+                        stream_obj = cast_stream
+                        stream_map[stream_spec.id] = stream_obj
+                        logger.info("✓ Casted stream %s to MaterialStream after collection lookup", stream_spec.id)
                 
                 # Set stream properties
                 # Verify we're using the correct object (after potential resolution)
@@ -1595,6 +1630,59 @@ class DWSIMClient:
             pass
         return default
 
+    def _get_dotnet_type(self, obj) -> Optional[str]:
+        """Return the .NET type name if available for diagnostics."""
+        try:
+            if hasattr(obj, "GetType"):
+                dotnet_type = obj.GetType()
+                fullname = getattr(dotnet_type, "FullName", None)
+                if fullname:
+                    return str(fullname)
+                return str(dotnet_type)
+        except Exception:
+            return None
+        return None
+
+    def _try_cast_material_stream(self, stream_obj):
+        """Attempt to cast an ISimulationObject to MaterialStream so SetProp becomes available."""
+        try:
+            import clr  # type: ignore
+            from DWSIM.Thermodynamics.Streams import MaterialStream  # type: ignore
+        except Exception:
+            return None
+
+        # If it's already the right type, return as-is
+        try:
+            if isinstance(stream_obj, MaterialStream):
+                return stream_obj
+        except Exception:
+            pass
+
+        # Try pythonnet cast helpers
+        for caster in (
+            lambda obj: clr.Convert(obj, MaterialStream),
+            lambda obj: MaterialStream(obj),
+        ):
+            try:
+                cast_stream = caster(stream_obj)
+                if cast_stream:
+                    return cast_stream
+            except Exception:
+                continue
+        return None
+
+    def _as_material_stream(self, candidate):
+        """Return a MaterialStream-capable object (has SetProp) if possible."""
+        if candidate is None:
+            return None
+        if hasattr(candidate, "SetProp"):
+            return candidate
+
+        cast_stream = self._try_cast_material_stream(candidate)
+        if cast_stream and hasattr(cast_stream, "SetProp"):
+            return cast_stream
+        return None
+
     def _set_stream_prop(self, stream_obj, prop_name, phase, comp, basis, unit, value) -> bool:
         """Attempt to set a property on a stream object using multiple APIs."""
         setters = []
@@ -1759,12 +1847,14 @@ class DWSIMClient:
 
     def _resolve_stream_object(self, flowsheet, stream_name: str, stream_obj):
         """If the returned object lacks SetProp, resolve the actual MaterialStream from collections."""
-        # Check if current object is already a MaterialStream (not just ISimulationObject)
-        stream_type_str = str(type(stream_obj)).lower()
-        if "materialstream" in stream_type_str and not "isimulationobject" in stream_type_str:
-            if hasattr(stream_obj, "SetProp") or hasattr(stream_obj, "SetPropertyValue"):
-                logger.debug("Stream '%s' is already a MaterialStream with SetProp", stream_name)
-                return stream_obj
+        # If the current object already exposes SetProp (or can be cast), use it
+        ms_candidate = self._as_material_stream(stream_obj)
+        if ms_candidate:
+            logger.debug("Stream '%s' already exposes SetProp (or was cast) during resolution", stream_name)
+            return ms_candidate
+        if hasattr(stream_obj, "SetPropertyValue"):
+            logger.debug("Stream '%s' exposes SetPropertyValue; keeping for now", stream_name)
+            return stream_obj
         
         # If it's ISimulationObject, we need to find the actual MaterialStream
         for attr in ["MaterialStreams", "SimulationObjects"]:
@@ -1774,36 +1864,34 @@ class DWSIMClient:
             
             # Try direct lookup by key/name
             candidate = self._get_collection_item(coll, stream_name)
-            if candidate:
-                cand_type = str(type(candidate)).lower()
-                # Prefer MaterialStream over ISimulationObject
-                if "materialstream" in cand_type and not "isimulationobject" in cand_type:
-                    if hasattr(candidate, "SetProp") or hasattr(candidate, "SetPropertyValue"):
-                        logger.debug("Resolved stream '%s' via %s collection to MaterialStream", stream_name, attr)
-                        return candidate
+            ms_candidate = self._as_material_stream(candidate)
+            if ms_candidate:
+                logger.debug("Resolved stream '%s' via %s collection to MaterialStream", stream_name, attr)
+                return ms_candidate
+            if candidate and (hasattr(candidate, "SetProp") or hasattr(candidate, "SetPropertyValue")):
+                logger.debug("Resolved stream '%s' via %s collection to object with property setters", stream_name, attr)
+                return candidate
             
             # Try name/tag matching over all items
             for item in self._iterate_collection(coll):
                 item_type = str(type(item)).lower()
                 name = getattr(item, "Name", None)
                 tag = getattr(getattr(item, "GraphicObject", None), "Tag", None)
+                ms_candidate = self._as_material_stream(item)
                 if name == stream_name or tag == stream_name:
-                    # Prefer MaterialStream over ISimulationObject
-                    if "materialstream" in item_type and not "isimulationobject" in item_type:
-                        if hasattr(item, "SetProp") or hasattr(item, "SetPropertyValue"):
-                            logger.debug("Resolved stream '%s' via %s collection (name/tag match to MaterialStream)", stream_name, attr)
-                            return item
-                    elif hasattr(item, "SetProp") or "stream" in item_type:
+                    if ms_candidate:
+                        logger.debug("Resolved stream '%s' via %s collection (name/tag match to MaterialStream)", stream_name, attr)
+                        return ms_candidate
+                    if hasattr(item, "SetProp") or hasattr(item, "SetPropertyValue"):
                         logger.debug("Resolved stream '%s' via %s collection (name/tag match)", stream_name, attr)
                         return item
             
             # Fallback: first MaterialStream with SetProp
             for item in self._iterate_collection(coll):
-                item_type = str(type(item)).lower()
-                if "materialstream" in item_type and not "isimulationobject" in item_type:
-                    if hasattr(item, "SetProp") or hasattr(item, "SetPropertyValue"):
-                        logger.debug("Resolved stream '%s' via %s collection (first MaterialStream)", stream_name, attr)
-                        return item
+                ms_candidate = self._as_material_stream(item)
+                if ms_candidate:
+                    logger.debug("Resolved stream '%s' via %s collection (first MaterialStream with SetProp)", stream_name, attr)
+                    return ms_candidate
             
             # Fallback: first item with SetProp
             for item in self._iterate_collection(coll):
@@ -1814,7 +1902,7 @@ class DWSIMClient:
             # Fallback: first item whose type looks like a stream
             for item in self._iterate_collection(coll):
                 item_type = str(type(item)).lower()
-                if "materialstream" in item_type or ("stream" in item_type and "isimulationobject" not in item_type):
+                if "materialstream" in item_type or "stream" in item_type:
                     logger.debug("Resolved stream '%s' via %s collection (type contains 'stream')", stream_name, attr)
                     return item
         
