@@ -796,35 +796,42 @@ class DWSIMClient:
     def _connect_streams(self, flowsheet, streams: List[schemas.StreamSpec], stream_map: dict, unit_map: dict, warnings: List[str]) -> None:
         """Connect material streams to unit operations."""
         for stream_spec in streams:
-            if not stream_spec.source or not stream_spec.target:
-                continue  # Skip streams without connections
-            
             stream_obj = stream_map.get(stream_spec.id)
             if not stream_obj:
                 warnings.append(f"Stream '{stream_spec.id}' not found for connection")
                 continue
             
-            # Connect to target unit (inlet)
-            target_unit = unit_map.get(stream_spec.target)
-            if target_unit:
-                try:
-                    # Map port handles to DWSIM port indices
-                    # This is simplified - actual port mapping depends on unit type
-                    port = self._map_port_to_index(stream_spec.targetHandle, stream_spec.target)
-                    target_unit.SetInletStream(port, stream_obj)
-                    logger.debug("Connected stream %s to unit %s (port %s)", stream_spec.id, stream_spec.target, port)
-                except Exception as exc:
-                    warnings.append(f"Failed to connect stream '{stream_spec.id}' to unit '{stream_spec.target}': {str(exc)}")
+            # Connect to target unit (inlet) - for feed streams or intermediate streams
+            if stream_spec.target:
+                target_unit = unit_map.get(stream_spec.target)
+                if target_unit:
+                    try:
+                        # Map port handles to DWSIM port indices
+                        # This is simplified - actual port mapping depends on unit type
+                        port = self._map_port_to_index(stream_spec.targetHandle, stream_spec.target)
+                        target_unit.SetInletStream(port, stream_obj)
+                        logger.debug("Connected stream %s to unit %s (port %s)", stream_spec.id, stream_spec.target, port)
+                    except Exception as exc:
+                        warnings.append(f"Failed to connect stream '{stream_spec.id}' to unit '{stream_spec.target}': {str(exc)}")
+                else:
+                    warnings.append(f"Target unit '{stream_spec.target}' not found for stream '{stream_spec.id}'")
             
-            # Connect from source unit (outlet)
-            source_unit = unit_map.get(stream_spec.source)
-            if source_unit:
-                try:
-                    port = self._map_port_to_index(stream_spec.sourceHandle, stream_spec.source)
-                    source_unit.SetOutletStream(port, stream_obj)
-                    logger.debug("Connected stream %s from unit %s (port %s)", stream_spec.id, stream_spec.source, port)
-                except Exception as exc:
-                    warnings.append(f"Failed to connect stream '{stream_spec.id}' from unit '{stream_spec.source}': {str(exc)}")
+            # Connect from source unit (outlet) - for product streams or intermediate streams
+            if stream_spec.source:
+                source_unit = unit_map.get(stream_spec.source)
+                if source_unit:
+                    try:
+                        port = self._map_port_to_index(stream_spec.sourceHandle, stream_spec.source)
+                        source_unit.SetOutletStream(port, stream_obj)
+                        logger.debug("Connected stream %s from unit %s (port %s)", stream_spec.id, stream_spec.source, port)
+                    except Exception as exc:
+                        warnings.append(f"Failed to connect stream '{stream_spec.id}' from unit '{stream_spec.source}': {str(exc)}")
+                else:
+                    warnings.append(f"Source unit '{stream_spec.source}' not found for stream '{stream_spec.id}'")
+            
+            # Warn if stream has no connections at all
+            if not stream_spec.source and not stream_spec.target:
+                warnings.append(f"Stream '{stream_spec.id}' has no source or target - it will not be connected")
 
     def _map_port_to_index(self, handle: Optional[str], unit_id: str) -> int:
         """Map port handle name to DWSIM port index."""
@@ -1120,6 +1127,10 @@ class DWSIMClient:
         results: List[schemas.StreamResult] = []
         sim_objects = None
         
+        # Create a map of stream names/IDs from payload for matching
+        payload_stream_ids = {s.id: s for s in payload.streams}
+        payload_stream_names = {s.name: s for s in payload.streams if s.name}
+        
         # Try multiple methods to get streams
         try:
             sim_objects = flowsheet.GetMaterialStreams()
@@ -1174,85 +1185,152 @@ class DWSIMClient:
                         return None
                 return None
 
+            # Map DWSIM streams to payload stream IDs
+            stream_id_map = {}  # Maps DWSIM stream object -> payload stream ID
+            
             for stream in stream_list:
                 try:
-                    stream_id = self._name_or_tag(stream, "stream")
+                    stream_name = self._name_or_tag(stream, "stream")
                     type_str = str(type(stream)).lower()
-                    # Heuristic: treat as stream if type/name suggests it or it exposes stream-like getters
-                    is_stream = (
-                        "stream" in type_str
-                        or "material" in type_str
-                        or stream_id.lower().startswith(("mat", "str", "stream", "eng"))
-                        or any(stream_id == s.id or stream_id == s.name for s in payload.streams)
-                    )
-                    if not is_stream:
-                        probe_ok = any(hasattr(stream, getter) for getter in ("GetPropertyValue", "GetProp"))
-                        if not probe_ok:
+                    
+                    # Check if this stream matches any payload stream by ID or name
+                    matched_id = None
+                    if stream_name in payload_stream_ids:
+                        matched_id = stream_name
+                    elif stream_name in payload_stream_names:
+                        matched_id = payload_stream_names[stream_name].id
+                    else:
+                        # Try to match by checking if stream name contains payload ID
+                        for payload_id, payload_stream in payload_stream_ids.items():
+                            if payload_id in str(stream_name) or str(stream_name) in payload_id:
+                                matched_id = payload_id
+                                break
+                    
+                    # Only process streams that match our payload
+                    if matched_id:
+                        stream_id_map[stream] = matched_id
+                    else:
+                        # Also check if it's a stream type (might be auto-generated by DWSIM)
+                        is_stream = (
+                            "stream" in type_str
+                            or "material" in type_str
+                            or stream_name.lower().startswith(("mat", "str", "stream", "eng"))
+                        )
+                        if is_stream and hasattr(stream, "GetPropertyValue") or hasattr(stream, "GetProp"):
+                            # This might be a stream we created but with a different name
+                            # Try to match by position or connection
+                            # For now, we'll skip unmatched streams to avoid confusion
+                            logger.debug("Skipping unmatched stream: %s", stream_name)
                             continue
-                    try:
-                        t = p = flow = None
-                        if hasattr(stream, "GetPropertyValue"):
-                            try:
-                                t_raw = stream.GetPropertyValue("temperature")
-                                t = t_raw - 273.15 if t_raw is not None else None
-                            except Exception:
-                                pass
-                            try:
-                                p = stream.GetPropertyValue("pressure")
-                            except Exception:
-                                pass
-                            try:
-                                flow_raw = stream.GetPropertyValue("totalflow")
-                                flow = flow_raw * 3600 if flow_raw is not None else None
-                            except Exception:
-                                pass
-                        if t is None and hasattr(stream, "GetProp"):
-                            try:
-                                t_raw = stream.GetProp('temperature', 'overall', None, '', 'K')[0]
-                                t = t_raw - 273.15 if t_raw is not None else None
-                            except Exception:
-                                pass
-                            try:
-                                p = stream.GetProp('pressure', 'overall', None, '', 'kPa')[0]
-                            except Exception:
-                                pass
-                            try:
-                                flow_raw = stream.GetProp('totalflow', 'overall', None, '', 'kg/s')[0]
-                                flow = flow_raw * 3600 if flow_raw is not None else None
-                            except Exception:
-                                pass
-                        # Direct attributes fallback
-                        if t is None:
-                            t_attr = getattr(stream, 'Temperature', None)
-                            if t_attr is not None:
-                                t = t_attr - 273.15 if t_attr > 100 else t_attr
-                        if p is None:
-                            p = getattr(stream, 'Pressure', None)
-                        if flow is None:
-                            flow_attr = getattr(stream, 'MassFlow', None) or getattr(stream, 'TotalFlow', None)
-                            if flow_attr is not None:
-                                flow = flow_attr * 3600 if flow_attr < 1e3 else flow_attr  # if already kg/h keep as is
-                    except Exception:
-                        t = p = flow = None
+                except Exception:
+                    logger.debug("Error checking stream name, skipping")
+                    continue
 
-                    # Normalize to numbers or None (avoid empty strings triggering pydantic errors)
+            # Extract properties only for matched streams
+            for stream, payload_stream_id in stream_id_map.items():
+                try:
+                    payload_stream = payload_stream_ids[payload_stream_id]
+                    t = p = flow = None
+                    vapor_frac = None
+                    composition = {}
+                    
+                    # Try GetPropertyValue first
+                    if hasattr(stream, "GetPropertyValue"):
+                        try:
+                            t_raw = stream.GetPropertyValue("temperature")
+                            t = t_raw - 273.15 if t_raw is not None else None
+                        except Exception:
+                            pass
+                        try:
+                            p = stream.GetPropertyValue("pressure")
+                        except Exception:
+                            pass
+                        try:
+                            flow_raw = stream.GetPropertyValue("totalflow")
+                            flow = flow_raw * 3600 if flow_raw is not None else None
+                        except Exception:
+                            pass
+                        try:
+                            vapor_frac = stream.GetPropertyValue("vaporfraction")
+                        except Exception:
+                            pass
+                    
+                    # Try GetProp as fallback
+                    if t is None and hasattr(stream, "GetProp"):
+                        try:
+                            t_raw = stream.GetProp('temperature', 'overall', None, '', 'K')[0]
+                            t = t_raw - 273.15 if t_raw is not None else None
+                        except Exception:
+                            pass
+                        try:
+                            p = stream.GetProp('pressure', 'overall', None, '', 'kPa')[0]
+                        except Exception:
+                            pass
+                        try:
+                            flow_raw = stream.GetProp('totalflow', 'overall', None, '', 'kg/s')[0]
+                            flow = flow_raw * 3600 if flow_raw is not None else None
+                        except Exception:
+                            pass
+                        try:
+                            vapor_frac = stream.GetProp('vaporfraction', 'overall', None, '', '')[0]
+                        except Exception:
+                            pass
+                    
+                    # Direct attributes fallback
+                    if t is None:
+                        t_attr = getattr(stream, 'Temperature', None)
+                        if t_attr is not None:
+                            t = t_attr - 273.15 if t_attr > 100 else t_attr
+                    if p is None:
+                        p = getattr(stream, 'Pressure', None)
+                    if flow is None:
+                        flow_attr = getattr(stream, 'MassFlow', None) or getattr(stream, 'TotalFlow', None)
+                        if flow_attr is not None:
+                            flow = flow_attr * 3600 if flow_attr < 1e3 else flow_attr
+                    if vapor_frac is None:
+                        vapor_frac = getattr(stream, 'VaporFraction', None)
+                    
+                    # Extract composition
+                    for comp in payload.thermo.components:
+                        try:
+                            if hasattr(stream, "GetProp"):
+                                comp_frac = stream.GetProp('molefraction', 'overall', comp, '', '')[0]
+                                if comp_frac is not None:
+                                    composition[comp] = float(comp_frac)
+                            elif hasattr(stream, "GetPropertyValue"):
+                                comp_frac = stream.GetPropertyValue(f"molefraction_{comp}")
+                                if comp_frac is not None:
+                                    composition[comp] = float(comp_frac)
+                        except Exception:
+                            composition[comp] = 0.0
+                    
+                    # If no composition found, initialize with zeros
+                    if not composition:
+                        composition = {comp: 0.0 for comp in payload.thermo.components}
+
+                    # Normalize to numbers or None
                     t = _as_number(t)
                     p = _as_number(p)
                     flow = _as_number(flow)
+                    vapor_frac = _as_number(vapor_frac)
+                    liquid_frac = _as_number(1.0 - vapor_frac) if vapor_frac is not None else None
 
                     results.append(
                         schemas.StreamResult(
-                            id=str(stream_id),
+                            id=payload_stream_id,  # Use payload ID, not DWSIM-generated ID
                             temperature_c=t,
                             pressure_kpa=p,
                             mass_flow_kg_per_h=flow,
-                            composition={comp: 0 for comp in payload.thermo.components},
+                            mole_flow_kmol_per_h=None,  # Could be calculated if needed
+                            vapor_fraction=vapor_frac,
+                            liquid_fraction=liquid_frac,
+                            composition=composition,
                         )
                     )
-                except Exception:
-                    logger.exception("Skipping stream extraction due to error")
+                except Exception as exc:
+                    logger.exception("Error extracting stream %s: %s", payload_stream_id, exc)
         except Exception as exc:
-            logger.warning("Failed to extract DWSIM streams: {}", exc)
+            logger.warning("Failed to extract DWSIM streams: %s", exc)
         return results
 
     def _extract_units(self, flowsheet) -> List[schemas.UnitResult]:  # pragma: no cover
