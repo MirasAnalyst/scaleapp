@@ -446,9 +446,31 @@ class DWSIMClient:
                     
                     # Try to read back what's actually in the stream
                     prop_info["has_getprop"] = hasattr(stream_obj, "GetProp")
+                    prop_info["has_setprop"] = hasattr(stream_obj, "SetProp")  # Critical for MaterialStream
                     prop_info["has_getpropertyvalue"] = hasattr(stream_obj, "GetPropertyValue")
                     prop_info["has_setpropertyvalue"] = hasattr(stream_obj, "SetPropertyValue")
                     prop_info["stream_type"] = str(type(stream_obj))
+                    
+                    # If we don't have SetProp, try to re-resolve from collection
+                    if not hasattr(stream_obj, "SetProp"):
+                        logger.warning("Diagnostics: Stream %s doesn't have SetProp, attempting re-resolution", stream_spec.id)
+                        try:
+                            if hasattr(flowsheet, "MaterialStreams"):
+                                all_streams = list(self._iterate_collection(flowsheet.MaterialStreams))
+                                for item in reversed(all_streams):
+                                    item_name = getattr(item, "Name", None)
+                                    item_tag = getattr(getattr(item, "GraphicObject", None), "Tag", None)
+                                    if (item_name == stream_spec.id or item_tag == stream_spec.id) and hasattr(item, "SetProp"):
+                                        stream_obj = item
+                                        stream_map[stream_spec.id] = stream_obj  # Update map
+                                        logger.info("✓ Re-resolved stream %s to MaterialStream with SetProp during diagnostics", stream_spec.id)
+                                        # Update diagnostics with resolved object
+                                        prop_info["has_setprop"] = True
+                                        prop_info["has_getprop"] = hasattr(stream_obj, "GetProp")
+                                        prop_info["stream_type"] = str(type(stream_obj))
+                                        break
+                        except Exception as e:
+                            logger.debug("Re-resolution during diagnostics failed: %s", e)
                     
                     # Try to find MaterialStream in collections for comparison
                     try:
@@ -815,15 +837,37 @@ class DWSIMClient:
                 # CRITICAL: If we don't have SetProp, try to get MaterialStream from collection
                 # MaterialStream implements ISimulationObject, so type checking alone isn't enough
                 # We need to check for SetProp method which is the key differentiator
+                
+                # First, try to get MaterialStream through GraphicObject if available
+                if not hasattr(stream_obj, "SetProp") and hasattr(stream_obj, "GraphicObject"):
+                    try:
+                        go = stream_obj.GraphicObject
+                        # Some DWSIM APIs attach the actual object to GraphicObject
+                        for attr in ["AttachedObject", "Object", "SimulationObject", "MaterialStream"]:
+                            if hasattr(go, attr):
+                                attached = getattr(go, attr)
+                                if attached and hasattr(attached, "SetProp"):
+                                    stream_obj = attached
+                                    stream_map[stream_spec.id] = stream_obj
+                                    logger.info("✓ Resolved MaterialStream via GraphicObject.%s for %s", attr, stream_spec.id)
+                                    break
+                    except Exception as e:
+                        logger.debug("GraphicObject resolution attempt failed: %s", e)
+                
                 if not hasattr(stream_obj, "SetProp"):
                     logger.warning("Stream %s doesn't have SetProp, attempting MaterialStream lookup from collection", stream_spec.id)
+                    resolved = False
                     try:
                         if hasattr(flowsheet, "MaterialStreams"):
                             # Get all streams and find the one we just created
                             all_streams = list(self._iterate_collection(flowsheet.MaterialStreams))
                             logger.info("Found %d streams in MaterialStreams collection", len(all_streams))
                             
+                            if len(all_streams) == 0:
+                                logger.warning("MaterialStreams collection is empty!")
+                            
                             # Log all streams for debugging
+                            streams_with_setprop = []
                             for idx, item in enumerate(all_streams):
                                 item_type = str(type(item))
                                 item_name = getattr(item, "Name", None)
@@ -831,36 +875,82 @@ class DWSIMClient:
                                 has_setprop = hasattr(item, "SetProp")
                                 logger.info("Stream %d in collection: name='%s', tag='%s', type=%s, has_SetProp=%s", 
                                            idx, item_name, item_tag, item_type, has_setprop)
+                                if has_setprop:
+                                    streams_with_setprop.append((idx, item, item_name, item_tag))
+                            
+                            logger.info("Found %d streams with SetProp method", len(streams_with_setprop))
                             
                             # PRIORITY 1: Match by name/tag AND has SetProp (this is the actual MaterialStream)
-                            for item in reversed(all_streams):  # Check newest first
-                                item_name = getattr(item, "Name", None)
-                                item_tag = getattr(getattr(item, "GraphicObject", None), "Tag", None)
-                                
+                            for idx, item, item_name, item_tag in streams_with_setprop:
                                 # Match by name or tag
                                 if item_name == stream_name or item_tag == stream_name:
-                                    # If it has SetProp, use it immediately (this is what we need!)
-                                    if hasattr(item, "SetProp"):
-                                        stream_obj = item
-                                        logger.info("✓ Resolved to MaterialStream with SetProp: %s (type: %s, name: %s, tag: %s)", 
-                                                  stream_spec.id, type(item).__name__, item_name, item_tag)
-                                        stream_map[stream_spec.id] = stream_obj  # Update the map
-                                        break
+                                    stream_obj = item
+                                    logger.info("✓ Resolved to MaterialStream with SetProp (by name): %s (type: %s, name: %s, tag: %s)", 
+                                              stream_spec.id, type(item).__name__, item_name, item_tag)
+                                    stream_map[stream_spec.id] = stream_obj  # Update the map
+                                    resolved = True
+                                    break
                             
                             # PRIORITY 2: If no name match, take the most recent stream with SetProp
-                            if not hasattr(stream_obj, "SetProp"):
-                                for item in reversed(all_streams):  # Check newest first
-                                    if hasattr(item, "SetProp"):
-                                        stream_obj = item
-                                        item_name = getattr(item, "Name", None)
-                                        logger.info("✓ Resolved to most recent MaterialStream with SetProp: %s (type: %s, name: %s)", 
-                                                  stream_spec.id, type(item).__name__, item_name)
-                                        stream_map[stream_spec.id] = stream_obj
-                                        break
+                            if not resolved and streams_with_setprop:
+                                # Use the last one (most recently created)
+                                idx, item, item_name, item_tag = streams_with_setprop[-1]
+                                stream_obj = item
+                                logger.info("✓ Resolved to most recent MaterialStream with SetProp: %s (type: %s, name: %s, tag: %s, index: %d)", 
+                                          stream_spec.id, type(item).__name__, item_name, item_tag, idx)
+                                stream_map[stream_spec.id] = stream_obj
+                                resolved = True
+                            
+                            # PRIORITY 3: If still no SetProp, try direct index access (last stream)
+                            if not resolved and len(all_streams) > 0:
+                                last_stream = all_streams[-1]
+                                logger.warning("No streams with SetProp found, trying last stream in collection: type=%s", type(last_stream).__name__)
+                                # Try to cast or use directly
+                                stream_obj = last_stream
+                                stream_map[stream_spec.id] = stream_obj
+                                # Update name/tag to match
+                                try:
+                                    if hasattr(stream_obj, "Name"):
+                                        stream_obj.Name = stream_name
+                                    if hasattr(stream_obj, "GraphicObject") and hasattr(stream_obj.GraphicObject, "Tag"):
+                                        stream_obj.GraphicObject.Tag = stream_name
+                                except Exception:
+                                    pass
+                                resolved = True
+                                
                     except Exception as e:
                         logger.warning("MaterialStream collection lookup failed: %s", e)
                         import traceback
                         logger.error("Traceback: %s", traceback.format_exc())
+                    
+                    # Final check - if we still don't have SetProp, log a critical error
+                    if not hasattr(stream_obj, "SetProp"):
+                        logger.error("CRITICAL: Stream %s still doesn't have SetProp after resolution! Type: %s", 
+                                    stream_spec.id, type(stream_obj).__name__)
+                        # Try one more thing - check if MaterialStreams is a dictionary and we can access by key
+                        try:
+                            if hasattr(flowsheet, "MaterialStreams"):
+                                # Try dictionary-style access
+                                if hasattr(flowsheet.MaterialStreams, "__getitem__"):
+                                    try:
+                                        # Try accessing by name
+                                        dict_stream = flowsheet.MaterialStreams[stream_name]
+                                        if hasattr(dict_stream, "SetProp"):
+                                            stream_obj = dict_stream
+                                            stream_map[stream_spec.id] = stream_obj
+                                            logger.info("✓ Resolved via dictionary access: %s", stream_spec.id)
+                                    except (KeyError, TypeError):
+                                        # Try accessing by index (if it's also indexable)
+                                        try:
+                                            dict_stream = flowsheet.MaterialStreams[len(stream_map) - 1]  # Current stream index
+                                            if hasattr(dict_stream, "SetProp"):
+                                                stream_obj = dict_stream
+                                                stream_map[stream_spec.id] = stream_obj
+                                                logger.info("✓ Resolved via index access: %s", stream_spec.id)
+                                        except Exception:
+                                            pass
+                        except Exception as e:
+                            logger.debug("Dictionary access attempt failed: %s", e)
                 
                 # Set stream properties
                 # Verify we're using the correct object (after potential resolution)
