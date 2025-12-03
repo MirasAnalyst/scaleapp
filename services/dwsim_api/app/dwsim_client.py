@@ -835,16 +835,27 @@ class DWSIMClient:
                     
                     # Try multiple connection methods
                     connected = False
+                    stream_graphic = getattr(stream_obj, "GraphicObject", None)
+                    unit_graphic = getattr(target_unit, "GraphicObject", None)
+                    
                     connection_methods = [
+                        # Direct unit methods
                         ("SetInletStream", lambda: target_unit.SetInletStream(port, stream_obj)),
                         ("SetInletMaterialStream", lambda: target_unit.SetInletMaterialStream(port, stream_obj)),
                         ("ConnectInlet", lambda: target_unit.ConnectInlet(port, stream_obj)),
                         ("AddInletStream", lambda: target_unit.AddInletStream(port, stream_obj)),
+                        # Property-based connections
                         ("InletStreams[index]", lambda: setattr(target_unit, f"InletStreams[{port}]", stream_obj) if hasattr(target_unit, "InletStreams") else None),
                         ("InletMaterialStreams[index]", lambda: setattr(target_unit, f"InletMaterialStreams[{port}]", stream_obj) if hasattr(target_unit, "InletMaterialStreams") else None),
                         # Try without port index
                         ("SetInletStream(no port)", lambda: target_unit.SetInletStream(stream_obj) if hasattr(target_unit, "SetInletStream") else None),
                         ("SetInletMaterialStream(no port)", lambda: target_unit.SetInletMaterialStream(stream_obj) if hasattr(target_unit, "SetInletMaterialStream") else None),
+                        # GraphicObject-based connections
+                        ("GraphicObject.Connections", lambda: self._connect_via_graphic_object(stream_graphic, unit_graphic, port, True) if stream_graphic and unit_graphic else None),
+                        ("GraphicObject.InputConnections", lambda: self._connect_via_graphic_input(unit_graphic, stream_obj, port) if unit_graphic else None),
+                        # Flowsheet-level connection
+                        ("Flowsheet.ConnectObjects", lambda: flowsheet.ConnectObjects(stream_obj, target_unit) if hasattr(flowsheet, "ConnectObjects") else None),
+                        ("Flowsheet.ConnectStreamToUnit", lambda: flowsheet.ConnectStreamToUnit(stream_obj, target_unit, port) if hasattr(flowsheet, "ConnectStreamToUnit") else None),
                     ]
                     
                     for method_name, method in connection_methods:
@@ -879,16 +890,27 @@ class DWSIMClient:
                     
                     # Try multiple connection methods
                     connected = False
+                    stream_graphic = getattr(stream_obj, "GraphicObject", None)
+                    unit_graphic = getattr(source_unit, "GraphicObject", None)
+                    
                     connection_methods = [
+                        # Direct unit methods
                         ("SetOutletStream", lambda: source_unit.SetOutletStream(port, stream_obj)),
                         ("SetOutletMaterialStream", lambda: source_unit.SetOutletMaterialStream(port, stream_obj)),
                         ("ConnectOutlet", lambda: source_unit.ConnectOutlet(port, stream_obj)),
                         ("AddOutletStream", lambda: source_unit.AddOutletStream(port, stream_obj)),
+                        # Property-based connections
                         ("OutletStreams[index]", lambda: setattr(source_unit, f"OutletStreams[{port}]", stream_obj) if hasattr(source_unit, "OutletStreams") else None),
                         ("OutletMaterialStreams[index]", lambda: setattr(source_unit, f"OutletMaterialStreams[{port}]", stream_obj) if hasattr(source_unit, "OutletMaterialStreams") else None),
                         # Try without port index
                         ("SetOutletStream(no port)", lambda: source_unit.SetOutletStream(stream_obj) if hasattr(source_unit, "SetOutletStream") else None),
                         ("SetOutletMaterialStream(no port)", lambda: source_unit.SetOutletMaterialStream(stream_obj) if hasattr(source_unit, "SetOutletMaterialStream") else None),
+                        # GraphicObject-based connections
+                        ("GraphicObject.Connections", lambda: self._connect_via_graphic_object(unit_graphic, stream_graphic, port, False) if stream_graphic and unit_graphic else None),
+                        ("GraphicObject.OutputConnections", lambda: self._connect_via_graphic_output(unit_graphic, stream_obj, port) if unit_graphic else None),
+                        # Flowsheet-level connection
+                        ("Flowsheet.ConnectObjects", lambda: flowsheet.ConnectObjects(source_unit, stream_obj) if hasattr(flowsheet, "ConnectObjects") else None),
+                        ("Flowsheet.ConnectUnitToStream", lambda: flowsheet.ConnectUnitToStream(source_unit, stream_obj, port) if hasattr(flowsheet, "ConnectUnitToStream") else None),
                     ]
                     
                     for method_name, method in connection_methods:
@@ -928,6 +950,90 @@ class DWSIMClient:
             return int(match.group(1)) - 1
         
         return 0  # Default to first port
+
+    def _connect_via_graphic_object(self, from_graphic, to_graphic, port: int, is_inlet: bool):
+        """Connect streams via GraphicObject connections."""
+        try:
+            if not from_graphic or not to_graphic:
+                return None
+            
+            # Try various GraphicObject connection methods
+            if hasattr(to_graphic, "InputConnections") and is_inlet:
+                connections = to_graphic.InputConnections
+                if hasattr(connections, "__setitem__"):
+                    connections[port] = from_graphic
+                    return True
+                elif hasattr(connections, "Add"):
+                    connections.Add(from_graphic)
+                    return True
+            
+            if hasattr(to_graphic, "OutputConnections") and not is_inlet:
+                connections = to_graphic.OutputConnections
+                if hasattr(connections, "__setitem__"):
+                    connections[port] = from_graphic
+                    return True
+                elif hasattr(connections, "Add"):
+                    connections.Add(from_graphic)
+                    return True
+            
+            # Try direct connection properties
+            if hasattr(to_graphic, "ConnectedObjects"):
+                if hasattr(to_graphic.ConnectedObjects, "__setitem__"):
+                    to_graphic.ConnectedObjects[port] = from_graphic
+                    return True
+                elif hasattr(to_graphic.ConnectedObjects, "Add"):
+                    to_graphic.ConnectedObjects.Add(from_graphic)
+                    return True
+            
+            return None
+        except Exception:
+            return None
+
+    def _connect_via_graphic_input(self, unit_graphic, stream_obj, port: int):
+        """Connect stream to unit via GraphicObject input connections."""
+        try:
+            if not unit_graphic:
+                return None
+            
+            stream_graphic = getattr(stream_obj, "GraphicObject", None)
+            if not stream_graphic:
+                return None
+            
+            if hasattr(unit_graphic, "InputConnections"):
+                connections = unit_graphic.InputConnections
+                if hasattr(connections, "__setitem__"):
+                    connections[port] = stream_graphic
+                    return True
+                elif hasattr(connections, "Add"):
+                    connections.Add(stream_graphic)
+                    return True
+            
+            return None
+        except Exception:
+            return None
+
+    def _connect_via_graphic_output(self, unit_graphic, stream_obj, port: int):
+        """Connect stream from unit via GraphicObject output connections."""
+        try:
+            if not unit_graphic:
+                return None
+            
+            stream_graphic = getattr(stream_obj, "GraphicObject", None)
+            if not stream_graphic:
+                return None
+            
+            if hasattr(unit_graphic, "OutputConnections"):
+                connections = unit_graphic.OutputConnections
+                if hasattr(connections, "__setitem__"):
+                    connections[port] = stream_graphic
+                    return True
+                elif hasattr(connections, "Add"):
+                    connections.Add(stream_graphic)
+                    return True
+            
+            return None
+        except Exception:
+            return None
 
     def _configure_units(self, flowsheet, units: List[schemas.UnitSpec], unit_map: dict, warnings: List[str]) -> None:
         """Configure unit operation parameters."""

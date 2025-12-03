@@ -47,3 +47,4 @@ Write-Host ""
 # Start the server
 uvicorn app.main:app --host 0.0.0.0 --port 8081
 
+
