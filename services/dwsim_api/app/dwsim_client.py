@@ -369,17 +369,31 @@ class DWSIMClient:
             # Step 4: Create unit operations
             unit_map = self._create_units(flowsheet, payload.units, warnings)
             
-            # Step 5: Connect streams to units
-            self._connect_streams(flowsheet, payload.streams, stream_map, unit_map, warnings)
+            # Step 5: Connect streams to units (optional - DWSIM may infer connections)
+            connection_warnings = []
+            self._connect_streams(flowsheet, payload.streams, stream_map, unit_map, connection_warnings)
+            
+            # Log connection warnings but don't fail - DWSIM may handle connections automatically
+            if connection_warnings:
+                logger.warning("Stream connection warnings (DWSIM may infer connections automatically):")
+                for warning in connection_warnings:
+                    logger.warning("  %s", warning)
+                    warnings.append(warning)
             
             # Step 6: Configure unit parameters
             self._configure_units(flowsheet, payload.units, unit_map, warnings)
             
-            # Step 7: Run simulation
+            # Step 7: Try alternative connection approach via flowsheet if direct connections failed
+            if connection_warnings:
+                logger.info("Attempting alternative connection methods via flowsheet...")
+                self._try_flowsheet_connections(flowsheet, payload.streams, stream_map, unit_map, warnings)
+            
+            # Step 8: Run simulation (DWSIM may infer connections from stream properties and unit config)
             logger.info("Running DWSIM simulation for flowsheet: %s", payload.name)
+            logger.info("Note: If connections failed, DWSIM may infer them from stream properties and unit configuration")
             self._automation.CalculateFlowsheet(flowsheet, None)
             
-            # Step 8: Extract results
+            # Step 9: Extract results
             stream_results = self._extract_streams(flowsheet, payload)
             unit_results = self._extract_units(flowsheet, payload)
             
@@ -935,6 +949,55 @@ class DWSIMClient:
             # Warn if stream has no connections at all
             if not stream_spec.source and not stream_spec.target:
                 warnings.append(f"Stream '{stream_spec.id}' has no source or target - it will not be connected")
+
+    def _try_flowsheet_connections(self, flowsheet, streams: List[schemas.StreamSpec], stream_map: dict, unit_map: dict, warnings: List[str]) -> None:
+        """Try alternative connection methods through the flowsheet object."""
+        for stream_spec in streams:
+            stream_obj = stream_map.get(stream_spec.id)
+            if not stream_obj:
+                continue
+            
+            # Try flowsheet-level connection methods
+            try:
+                # Method 1: ConnectObjects (if available)
+                if stream_spec.target:
+                    target_unit = unit_map.get(stream_spec.target)
+                    if target_unit and hasattr(flowsheet, "ConnectObjects"):
+                        try:
+                            flowsheet.ConnectObjects(stream_obj, target_unit)
+                            logger.debug("Connected stream %s to unit %s via flowsheet.ConnectObjects", stream_spec.id, stream_spec.target)
+                        except Exception as e:
+                            logger.debug("flowsheet.ConnectObjects failed: %s", e)
+                
+                if stream_spec.source:
+                    source_unit = unit_map.get(stream_spec.source)
+                    if source_unit and hasattr(flowsheet, "ConnectObjects"):
+                        try:
+                            flowsheet.ConnectObjects(source_unit, stream_obj)
+                            logger.debug("Connected stream %s from unit %s via flowsheet.ConnectObjects", stream_spec.id, stream_spec.source)
+                        except Exception as e:
+                            logger.debug("flowsheet.ConnectObjects failed: %s", e)
+                
+                # Method 2: Try setting connections through GraphicObjects after calculation prep
+                # This might work if DWSIM needs objects to be fully initialized first
+                stream_graphic = getattr(stream_obj, "GraphicObject", None)
+                
+                if stream_spec.target and stream_graphic:
+                    target_unit = unit_map.get(stream_spec.target)
+                    if target_unit:
+                        unit_graphic = getattr(target_unit, "GraphicObject", None)
+                        if unit_graphic:
+                            try:
+                                # Try setting connection points directly
+                                if hasattr(stream_graphic, "OutputConnections"):
+                                    if hasattr(stream_graphic.OutputConnections, "Add"):
+                                        stream_graphic.OutputConnections.Add(unit_graphic)
+                                        logger.debug("Connected via stream GraphicObject.OutputConnections")
+                            except Exception as e:
+                                logger.debug("GraphicObject connection attempt failed: %s", e)
+                
+            except Exception as e:
+                logger.debug("Alternative connection method failed for stream %s: %s", stream_spec.id, e)
 
     def _map_port_to_index(self, handle: Optional[str], unit_id: str) -> int:
         """Map port handle name to DWSIM port index."""
