@@ -1605,42 +1605,50 @@ class DWSIMClient:
             setters.append(lambda: stream_obj.SetProp(prop_name, phase, comp, basis, unit, value))
             logger.debug("Using SetProp method for property '%s'", prop_name)
         
-        # PRIORITY 2: For ISimulationObject, try SetPropertyValue (interface method, but may not work)
+        # PRIORITY 2: For ISimulationObject, try SetPropertyValue (interface method)
+        # CRITICAL: SetPropertyValue may need property IDs (integers) instead of strings
         stream_type_str = str(type(stream_obj)).lower()
         if "isimulationobject" in stream_type_str:
             if hasattr(stream_obj, "SetPropertyValue"):
-                # SetPropertyValue signature might be: SetPropertyValue(property, value) or SetPropertyValue(property, phase, value)
-                prop_map = {
-                    "temperature": "Temperature",
-                    "pressure": "Pressure", 
-                    "totalflow": "MassFlow",
-                    "molefraction": "MoleFraction",
-                    "vaporfraction": "VaporFraction"
+                # Try to find property ID constants/enums
+                # DWSIM uses property IDs - try to access them through PropertyPackage or constants
+                prop_id_map = {
+                    "temperature": [1, "Temperature", "TEMP", "temperature"],
+                    "pressure": [2, "Pressure", "PRES", "pressure"],
+                    "totalflow": [3, "MassFlow", "MASSFLOW", "totalflow"],
+                    "molefraction": [4, "MoleFraction", "MOLEFRAC", "molefraction"],
+                    "vaporfraction": [5, "VaporFraction", "VF", "vaporfraction"],
                 }
-                prop_key = prop_map.get(prop_name.lower(), prop_name)
                 
-                # Try SetPropertyValue with different signatures and property name formats
-                setters.append(lambda: stream_obj.SetPropertyValue(prop_key, value))
-                setters.append(lambda: stream_obj.SetPropertyValue(prop_name.title(), value))
-                setters.append(lambda: stream_obj.SetPropertyValue(prop_name, value))
+                prop_variants = prop_id_map.get(prop_name.lower(), [prop_name.title(), prop_name])
                 
-                # Try with phase parameter (if SetPropertyValue takes phase)
-                if phase:
-                    # Try 3-parameter version (property, phase, value) - catch if it fails
-                    setters.append(lambda: stream_obj.SetPropertyValue(prop_key, phase, value))
-                    setters.append(lambda: stream_obj.SetPropertyValue(prop_name.title(), phase, value))
+                # Try SetPropertyValue with property IDs (integers) first
+                for prop_id in prop_variants:
+                    if isinstance(prop_id, int):
+                        setters.insert(0, lambda pid=prop_id, v=value: stream_obj.SetPropertyValue(pid, v))
+                        if phase:
+                            setters.insert(1, lambda pid=prop_id, p=phase, v=value: stream_obj.SetPropertyValue(pid, p, v))
                 
-                # Also try with "Prop" suffix
-                setters.append(lambda: stream_obj.SetPropertyValue(f"{prop_key}Prop", value))
+                # Try SetPropertyValue with property name strings
+                for prop_variant in prop_variants:
+                    if isinstance(prop_variant, str):
+                        setters.append(lambda pv=prop_variant, v=value: stream_obj.SetPropertyValue(pv, v))
+                        setters.append(lambda pv=prop_variant, v=value: stream_obj.SetPropertyValue(pv.upper(), v))
+                        setters.append(lambda pv=prop_variant, v=value: stream_obj.SetPropertyValue(pv.lower(), v))
+                        if phase:
+                            setters.append(lambda pv=prop_variant, p=phase, v=value: stream_obj.SetPropertyValue(pv, p, v))
                 
-                # If it's composition, try SetPropertyValue with component
-                if prop_name.lower() == "molefraction" and comp:
-                    setters.append(lambda c=comp, v=value: stream_obj.SetPropertyValue(f"MoleFraction_{c}", v))
-                    setters.append(lambda c=comp, v=value: stream_obj.SetPropertyValue(f"{c}_MoleFraction", v))
-                    setters.append(lambda c=comp, v=value: stream_obj.SetPropertyValue(f"{c}.MoleFraction", v))
-                    # Try with phase and component
-                    if phase:
-                        setters.append(lambda c=comp, v=value, p=phase: stream_obj.SetPropertyValue(f"MoleFraction_{c}", p, v))
+                # Try accessing through PropertyPackage if available
+                try:
+                    if hasattr(stream_obj, "PropertyPackage") and stream_obj.PropertyPackage:
+                        pp = stream_obj.PropertyPackage
+                        # PropertyPackage might have methods to set properties
+                        for method_name in ["SetProperty", "SetStreamProperty", "SetMaterialStreamProperty"]:
+                            if hasattr(pp, method_name):
+                                method = getattr(pp, method_name)
+                                setters.append(lambda m=method, pn=prop_name, v=value, so=stream_obj: m(so, pn, v))
+                except Exception as e:
+                    logger.debug("PropertyPackage access failed: %s", e)
         for meth in ("SetPropertyValue", "SetPropertyValue2"):
             if hasattr(stream_obj, meth):
                 setter = getattr(stream_obj, meth)
