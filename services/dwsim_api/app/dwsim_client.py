@@ -1667,6 +1667,14 @@ class DWSIMClient:
             if hasattr(stream_obj, attr):
                 setters.append(lambda a=attr: setattr(stream_obj, a, value))
 
+        # Log what we're about to try
+        logger.info("Attempting to set property '%s' = %s on stream %s (type: %s, has_SetProp: %s, has_SetPropertyValue: %s, %d methods to try)", 
+                   prop_name, value, getattr(stream_obj, "Name", "unknown"), 
+                   type(stream_obj).__name__, 
+                   hasattr(stream_obj, "SetProp"), 
+                   hasattr(stream_obj, "SetPropertyValue"),
+                   len(setters))
+        
         for idx, setter in enumerate(setters):
             try:
                 result = setter()
@@ -1674,17 +1682,79 @@ class DWSIMClient:
                 logger.info("✓ Successfully set property '%s' using method %d (value: %s, result: %s, stream: %s)", 
                           prop_name, idx, value, result, 
                           getattr(stream_obj, "Name", "unknown"))
+                
+                # Verify it was actually set by trying to read it back
+                try:
+                    if hasattr(stream_obj, "GetPropertyValue"):
+                        read_back = stream_obj.GetPropertyValue(prop_name)
+                        logger.info("  Read-back value: %s", read_back)
+                    if hasattr(stream_obj, "GetProp"):
+                        read_back = stream_obj.GetProp(prop_name, phase, comp, basis, unit)
+                        logger.info("  Read-back via GetProp: %s", read_back)
+                except Exception as e:
+                    logger.debug("  Read-back verification failed: %s", e)
+                
                 return True
             except Exception as e:
                 error_msg = str(e)
                 # Log all errors for debugging - we need to see what's failing
-                logger.warning("✗ Property setter %d failed for '%s' (value: %s): %s", 
-                             idx, prop_name, value, error_msg[:200])
+                # Only log first few attempts to avoid spam, but log all for critical properties
+                if idx < 5 or prop_name.lower() in ["temperature", "pressure"]:
+                    logger.warning("✗ Property setter %d failed for '%s' (value: %s): %s", 
+                                 idx, prop_name, value, error_msg[:300])
                 continue
+        
+        # If all setters failed, try one more thing: check if we can access the actual MaterialStream type
         logger.error("All %d property setters failed for '%s' (value: %s, stream type: %s, has_SetProp: %s, has_SetPropertyValue: %s)", 
                      len(setters), prop_name, value, type(stream_obj).__name__, 
                      hasattr(stream_obj, "SetProp"), 
                      hasattr(stream_obj, "SetPropertyValue"))
+        
+        # Last resort: try to get all available methods/attributes and try .NET casting
+        try:
+            all_methods = [m for m in dir(stream_obj) if not m.startswith('_') and callable(getattr(stream_obj, m, None))]
+            prop_methods = [m for m in all_methods if 'prop' in m.lower() or 'set' in m.lower() or 'temp' in m.lower() or 'press' in m.lower()]
+            logger.warning("Available property-related methods on stream object: %s", prop_methods[:10])
+            
+            # Try .NET casting to MaterialStream if pythonnet supports it
+            try:
+                import clr
+                # Try to get the actual MaterialStream type
+                material_stream_type = None
+                try:
+                    from DWSIM.Thermodynamics.Streams import MaterialStream
+                    material_stream_type = MaterialStream
+                except ImportError:
+                    try:
+                        # Try alternative import path
+                        import DWSIM
+                        material_stream_type = getattr(DWSIM, "MaterialStream", None)
+                        if not material_stream_type:
+                            # Try to find it in Thermodynamics.Streams
+                            thermo = getattr(DWSIM, "Thermodynamics", None)
+                            if thermo:
+                                streams = getattr(thermo, "Streams", None)
+                                if streams:
+                                    material_stream_type = getattr(streams, "MaterialStream", None)
+                    except Exception:
+                        pass
+                
+                if material_stream_type:
+                    # Try to cast ISimulationObject to MaterialStream
+                    try:
+                        cast_stream = clr.Convert(stream_obj, material_stream_type)
+                        if cast_stream and hasattr(cast_stream, "SetProp"):
+                            logger.info("✓ Successfully cast to MaterialStream, trying SetProp")
+                            result = cast_stream.SetProp(prop_name, phase, comp, basis, unit, value)
+                            logger.info("✓ SetProp on cast MaterialStream succeeded!")
+                            return True
+                    except Exception as e:
+                        logger.debug("Casting to MaterialStream failed: %s", e)
+            except Exception as e:
+                logger.debug("NET casting attempt failed: %s", e)
+        except Exception as e:
+            logger.debug("Method discovery failed: %s", e)
+        
         return False
 
     def _resolve_stream_object(self, flowsheet, stream_name: str, stream_obj):
