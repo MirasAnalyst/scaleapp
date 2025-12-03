@@ -421,13 +421,57 @@ class DWSIMClient:
             stream_results = self._extract_streams(flowsheet, payload)
             unit_results = self._extract_units(flowsheet, payload)
             
+            # Add diagnostic information
+            diagnostics = {
+                "mode": "dwsim",
+                "units_created": len(unit_map),
+                "streams_created": len(stream_map),
+            }
+            
+            # Add property setting diagnostics
+            property_diagnostics = {}
+            for stream_spec in payload.streams:
+                stream_obj = stream_map.get(stream_spec.id)
+                if stream_obj:
+                    prop_info = {}
+                    props = stream_spec.properties or {}
+                    
+                    # Check if we tried to set properties
+                    prop_info["properties_specified"] = {
+                        "temperature": props.get("temperature"),
+                        "pressure": props.get("pressure"),
+                        "flow_rate": props.get("flow_rate") or props.get("mass_flow"),
+                        "has_composition": bool(props.get("composition")),
+                    }
+                    
+                    # Try to read back what's actually in the stream
+                    try:
+                        if hasattr(stream_obj, "GetProp"):
+                            try:
+                                temp = stream_obj.GetProp('temperature', 'overall', None, '', 'K')
+                                prop_info["temperature_read_back_k"] = temp[0] if temp and len(temp) > 0 else None
+                            except Exception:
+                                prop_info["temperature_read_back_k"] = "error"
+                            
+                            try:
+                                press = stream_obj.GetProp('pressure', 'overall', None, '', 'kPa')
+                                prop_info["pressure_read_back_kpa"] = press[0] if press and len(press) > 0 else None
+                            except Exception:
+                                prop_info["pressure_read_back_kpa"] = "error"
+                    except Exception:
+                        pass
+                    
+                    property_diagnostics[stream_spec.id] = prop_info
+            
+            diagnostics["property_setting"] = property_diagnostics
+            
             return schemas.SimulationResult(
                 flowsheet_name=payload.name,
                 status="ok" if stream_results else "empty",
                 streams=stream_results,
                 units=unit_results,
                 warnings=warnings if warnings else [],
-                diagnostics={"mode": "dwsim", "units_created": len(unit_map), "streams_created": len(stream_map)},
+                diagnostics=diagnostics,
             )
         except Exception as exc:
             logger.exception("Error creating/running DWSIM flowsheet: %s", exc)
