@@ -445,21 +445,46 @@ class DWSIMClient:
                     }
                     
                     # Try to read back what's actually in the stream
-                    try:
-                        if hasattr(stream_obj, "GetProp"):
-                            try:
-                                temp = stream_obj.GetProp('temperature', 'overall', None, '', 'K')
-                                prop_info["temperature_read_back_k"] = temp[0] if temp and len(temp) > 0 else None
-                            except Exception:
-                                prop_info["temperature_read_back_k"] = "error"
-                            
-                            try:
-                                press = stream_obj.GetProp('pressure', 'overall', None, '', 'kPa')
-                                prop_info["pressure_read_back_kpa"] = press[0] if press and len(press) > 0 else None
-                            except Exception:
-                                prop_info["pressure_read_back_kpa"] = "error"
-                    except Exception:
-                        pass
+                    prop_info["has_getprop"] = hasattr(stream_obj, "GetProp")
+                    prop_info["has_getpropertyvalue"] = hasattr(stream_obj, "GetPropertyValue")
+                    prop_info["stream_type"] = str(type(stream_obj))
+                    
+                    # Try GetProp
+                    if hasattr(stream_obj, "GetProp"):
+                        try:
+                            temp = stream_obj.GetProp('temperature', 'overall', None, '', 'K')
+                            prop_info["temperature_read_back_k"] = temp[0] if temp and len(temp) > 0 else None
+                            prop_info["temperature_read_error"] = None
+                        except Exception as e:
+                            prop_info["temperature_read_back_k"] = None
+                            prop_info["temperature_read_error"] = str(e)[:100]  # Truncate long errors
+                        
+                        try:
+                            press = stream_obj.GetProp('pressure', 'overall', None, '', 'kPa')
+                            prop_info["pressure_read_back_kpa"] = press[0] if press and len(press) > 0 else None
+                            prop_info["pressure_read_error"] = None
+                        except Exception as e:
+                            prop_info["pressure_read_back_kpa"] = None
+                            prop_info["pressure_read_error"] = str(e)[:100]
+                    else:
+                        prop_info["temperature_read_back_k"] = None
+                        prop_info["temperature_read_error"] = "GetProp not available"
+                        prop_info["pressure_read_back_kpa"] = None
+                        prop_info["pressure_read_error"] = "GetProp not available"
+                    
+                    # Try GetPropertyValue as alternative
+                    if hasattr(stream_obj, "GetPropertyValue"):
+                        try:
+                            temp_gpv = stream_obj.GetPropertyValue("temperature")
+                            prop_info["temperature_getpropertyvalue"] = temp_gpv if temp_gpv is not None else None
+                        except Exception as e:
+                            prop_info["temperature_getpropertyvalue"] = f"error: {str(e)[:50]}"
+                        
+                        try:
+                            press_gpv = stream_obj.GetPropertyValue("pressure")
+                            prop_info["pressure_getpropertyvalue"] = press_gpv if press_gpv is not None else None
+                        except Exception as e:
+                            prop_info["pressure_getpropertyvalue"] = f"error: {str(e)[:50]}"
                     
                     property_diagnostics[stream_spec.id] = prop_info
             
@@ -721,16 +746,28 @@ class DWSIMClient:
                 
                 # Temperature (convert C to K if needed)
                 temp = props.get("temperature")
+                temp_set = False
                 if temp is not None:
-                    if not self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "K", temp + 273.15):
-                        if not self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "C", temp):
-                            warnings.append(f"Stream {stream_spec.id}: Could not set temperature")
+                    if self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "K", temp + 273.15):
+                        temp_set = True
+                        logger.debug("Set temperature for %s: %f K", stream_spec.id, temp + 273.15)
+                    elif self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "C", temp):
+                        temp_set = True
+                        logger.debug("Set temperature for %s: %f C", stream_spec.id, temp)
+                    else:
+                        warnings.append(f"Stream {stream_spec.id}: Could not set temperature")
+                        logger.warning("Failed to set temperature for stream %s using all methods", stream_spec.id)
                 
                 # Pressure (in kPa)
                 pressure = props.get("pressure")
+                pressure_set = False
                 if pressure is not None:
-                    if not self._set_stream_prop(stream_obj, "pressure", "overall", None, "", "kPa", pressure):
+                    if self._set_stream_prop(stream_obj, "pressure", "overall", None, "", "kPa", pressure):
+                        pressure_set = True
+                        logger.debug("Set pressure for %s: %f kPa", stream_spec.id, pressure)
+                    else:
                         warnings.append(f"Stream {stream_spec.id}: Could not set pressure")
+                        logger.warning("Failed to set pressure for stream %s using all methods", stream_spec.id)
                 
                 # Mass flow (convert kg/h to kg/s)
                 flow = props.get("flow_rate") or props.get("mass_flow")
