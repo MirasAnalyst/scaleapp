@@ -445,8 +445,8 @@ class DWSIMClient:
                     }
                     
                     # Try to read back what's actually in the stream
-                    prop_info["has_getprop"] = hasattr(stream_obj, "GetProp")
-                    prop_info["has_setprop"] = hasattr(stream_obj, "SetProp")  # Critical for MaterialStream
+                    prop_info["has_getprop"] = self._has_method(stream_obj, "GetProp")
+                    prop_info["has_setprop"] = self._has_method(stream_obj, "SetProp")  # Critical for MaterialStream
                     prop_info["has_getpropertyvalue"] = hasattr(stream_obj, "GetPropertyValue")
                     prop_info["has_setpropertyvalue"] = hasattr(stream_obj, "SetPropertyValue")
                     prop_info["stream_type"] = str(type(stream_obj))
@@ -455,11 +455,11 @@ class DWSIMClient:
                     # If we don't have SetProp, try to re-resolve from collection
                     if not hasattr(stream_obj, "SetProp"):
                         cast_stream = self._as_material_stream(stream_obj)
-                        if cast_stream and hasattr(cast_stream, "SetProp"):
+                        if cast_stream and self._has_method(cast_stream, "SetProp"):
                             stream_obj = cast_stream
                             stream_map[stream_spec.id] = stream_obj
                             prop_info["has_setprop"] = True
-                            prop_info["has_getprop"] = hasattr(stream_obj, "GetProp")
+                            prop_info["has_getprop"] = self._has_method(stream_obj, "GetProp")
                             prop_info["stream_type"] = str(type(stream_obj))
                             prop_info["dotnet_type"] = self._get_dotnet_type(stream_obj)
                             logger.info("Diagnostics: Casted stream %s to MaterialStream for diagnostics", stream_spec.id)
@@ -479,7 +479,7 @@ class DWSIMClient:
                                         logger.info("✓ Re-resolved stream %s to MaterialStream during diagnostics", stream_spec.id)
                                         # Update diagnostics with resolved object
                                         prop_info["has_setprop"] = True
-                                        prop_info["has_getprop"] = hasattr(stream_obj, "GetProp")
+                                        prop_info["has_getprop"] = self._has_method(stream_obj, "GetProp")
                                         prop_info["stream_type"] = str(type(stream_obj))
                                         prop_info["dotnet_type"] = self._get_dotnet_type(stream_obj)
                                         break
@@ -499,7 +499,7 @@ class DWSIMClient:
                                     "name": item_name,
                                     "type": item_type,
                                     "dotnet_type": dotnet_type,
-                                    "has_setprop": hasattr(item, "SetProp"),
+                                    "has_setprop": self._has_method(item, "SetProp"),
                                     "has_setpropertyvalue": hasattr(item, "SetPropertyValue"),
                                 })
                                 if item_name == stream_spec.id:
@@ -507,7 +507,7 @@ class DWSIMClient:
                                         "name": item_name,
                                         "type": item_type,
                                         "dotnet_type": dotnet_type,
-                                        "has_setprop": hasattr(item, "SetProp"),
+                                        "has_setprop": self._has_method(item, "SetProp"),
                                         "has_setpropertyvalue": hasattr(item, "SetPropertyValue"),
                                     })
                             prop_info["all_materialstreams_in_collection"] = all_streams_info
@@ -519,9 +519,12 @@ class DWSIMClient:
                         prop_info["materialstreams_collection_error"] = str(e)[:100]
                     
                     # Try GetProp
-                    if hasattr(stream_obj, "GetProp"):
+                    getprop_method = getattr(stream_obj, "GetProp", None)
+                    if not getprop_method:
+                        getprop_method = self._get_dotnet_method(stream_obj, "GetProp")
+                    if getprop_method:
                         try:
-                            temp = stream_obj.GetProp('temperature', 'overall', None, '', 'K')
+                            temp = getprop_method('temperature', 'overall', None, '', 'K')
                             prop_info["temperature_read_back_k"] = temp[0] if temp and len(temp) > 0 else None
                             prop_info["temperature_read_error"] = None
                         except Exception as e:
@@ -529,7 +532,7 @@ class DWSIMClient:
                             prop_info["temperature_read_error"] = str(e)[:100]  # Truncate long errors
                         
                         try:
-                            press = stream_obj.GetProp('pressure', 'overall', None, '', 'kPa')
+                            press = getprop_method('pressure', 'overall', None, '', 'kPa')
                             prop_info["pressure_read_back_kpa"] = press[0] if press and len(press) > 0 else None
                             prop_info["pressure_read_error"] = None
                         except Exception as e:
@@ -1643,6 +1646,25 @@ class DWSIMClient:
             return None
         return None
 
+    def _get_dotnet_method(self, obj, method_name: str):
+        """Try to fetch a .NET method even if pythonnet doesn't surface it as an attribute."""
+        try:
+            from System.Reflection import BindingFlags  # type: ignore
+        except Exception:
+            return None
+
+        try:
+            if hasattr(obj, "GetType"):
+                dotnet_type = obj.GetType()
+                return dotnet_type.GetMethod(method_name, BindingFlags.Public | BindingFlags.Instance)
+        except Exception:
+            return None
+        return None
+
+    def _has_method(self, obj, method_name: str) -> bool:
+        """Check for a method via python attribute or reflection."""
+        return hasattr(obj, method_name) or self._get_dotnet_method(obj, method_name) is not None
+
     def _try_cast_material_stream(self, stream_obj):
         """Attempt to cast an ISimulationObject to MaterialStream so SetProp becomes available."""
         try:
@@ -1677,6 +1699,8 @@ class DWSIMClient:
             return None
         if hasattr(candidate, "SetProp"):
             return candidate
+        if self._get_dotnet_method(candidate, "SetProp"):
+            return candidate
 
         cast_stream = self._try_cast_material_stream(candidate)
         if cast_stream and hasattr(cast_stream, "SetProp"):
@@ -1689,9 +1713,17 @@ class DWSIMClient:
         
         # PRIORITY 1: SetProp is the canonical MaterialStream method - try this FIRST if available
         # This is the method that actually works on MaterialStream objects
+        setprop_method = None
         if hasattr(stream_obj, "SetProp"):
-            setters.append(lambda: stream_obj.SetProp(prop_name, phase, comp, basis, unit, value))
-            logger.debug("Using SetProp method for property '%s'", prop_name)
+            setprop_method = getattr(stream_obj, "SetProp")
+            setters.append(lambda: setprop_method(prop_name, phase, comp, basis, unit, value))
+            logger.debug("Using SetProp method for property '%s' (direct)", prop_name)
+        else:
+            # Try reflection even if pythonnet doesn't expose SetProp
+            setprop_method = self._get_dotnet_method(stream_obj, "SetProp")
+            if setprop_method:
+                setters.append(lambda: setprop_method.Invoke(stream_obj, [prop_name, phase, comp, basis, unit, value]))
+                logger.debug("Using SetProp via reflection for property '%s'", prop_name)
         
         # PRIORITY 2: For ISimulationObject, try SetPropertyValue (interface method)
         # CRITICAL: SetPropertyValue may need property IDs (integers) instead of strings
@@ -1759,7 +1791,7 @@ class DWSIMClient:
         logger.info("Attempting to set property '%s' = %s on stream %s (type: %s, has_SetProp: %s, has_SetPropertyValue: %s, %d methods to try)", 
                    prop_name, value, getattr(stream_obj, "Name", "unknown"), 
                    type(stream_obj).__name__, 
-                   hasattr(stream_obj, "SetProp"), 
+                   self._has_method(stream_obj, "SetProp"), 
                    hasattr(stream_obj, "SetPropertyValue"),
                    len(setters))
         
