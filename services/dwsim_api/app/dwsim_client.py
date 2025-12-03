@@ -820,7 +820,14 @@ class DWSIMClient:
                         if hasattr(flowsheet, "MaterialStreams"):
                             # Get all streams and find the one we just created
                             all_streams = list(self._iterate_collection(flowsheet.MaterialStreams))
-                            logger.debug("Found %d streams in MaterialStreams collection", len(all_streams))
+                            logger.info("Found %d streams in MaterialStreams collection", len(all_streams))
+                            
+                            # Log all streams for debugging
+                            for idx, item in enumerate(all_streams):
+                                item_type = str(type(item))
+                                item_name = getattr(item, "Name", None)
+                                logger.debug("Stream %d in collection: name='%s', type=%s, has_SetProp=%s", 
+                                           idx, item_name, item_type, hasattr(item, "SetProp"))
                             
                             # Try to match by name or take the last one (most recently created)
                             for item in reversed(all_streams):  # Check newest first
@@ -831,13 +838,31 @@ class DWSIMClient:
                                 if "materialstream" in item_type and "isimulationobject" not in item_type:
                                     if item_name == stream_name or not item_name:
                                         stream_obj = item
-                                        logger.info("Resolved to MaterialStream: %s (type: %s)", stream_spec.id, type(item).__name__)
+                                        logger.info("Resolved to MaterialStream: %s (type: %s, name: %s)", 
+                                                  stream_spec.id, type(item).__name__, item_name)
                                         stream_map[stream_spec.id] = stream_obj  # Update the map
+                                        break
+                                # Also try if it has SetProp (even if type name doesn't match)
+                                elif hasattr(item, "SetProp"):
+                                    if item_name == stream_name or not item_name:
+                                        stream_obj = item
+                                        logger.info("Resolved to object with SetProp: %s (type: %s, name: %s)", 
+                                                  stream_spec.id, type(item).__name__, item_name)
+                                        stream_map[stream_spec.id] = stream_obj
                                         break
                     except Exception as e:
                         logger.warning("MaterialStream collection lookup failed: %s", e)
+                        import traceback
+                        logger.debug("Traceback: %s", traceback.format_exc())
                 
                 # Set stream properties
+                # Verify we're using the correct object (after potential resolution)
+                final_obj_type = str(type(stream_obj))
+                final_obj_name = getattr(stream_obj, "Name", "unknown")
+                logger.info("Setting properties for stream %s using object: type=%s, name=%s, has_SetProp=%s, has_SetPropertyValue=%s", 
+                          stream_spec.id, final_obj_type, final_obj_name,
+                          hasattr(stream_obj, "SetProp"), hasattr(stream_obj, "SetPropertyValue"))
+                
                 props = stream_spec.properties or {}
                 
                 # Temperature (convert C to K if needed)
@@ -846,10 +871,12 @@ class DWSIMClient:
                 if temp is not None:
                     if self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "K", temp + 273.15):
                         temp_set = True
-                        logger.debug("Set temperature for %s: %f K", stream_spec.id, temp + 273.15)
+                        logger.info("✓ Set temperature for %s: %f K", stream_spec.id, temp + 273.15)
                     elif self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "C", temp):
                         temp_set = True
-                        logger.debug("Set temperature for %s: %f C", stream_spec.id, temp)
+                        logger.info("✓ Set temperature for %s: %f C", stream_spec.id, temp)
+                    else:
+                        logger.error("✗ Failed to set temperature for %s", stream_spec.id)
                     else:
                         warnings.append(f"Stream {stream_spec.id}: Could not set temperature")
                         logger.warning("Failed to set temperature for stream %s using all methods", stream_spec.id)
@@ -1536,13 +1563,22 @@ class DWSIMClient:
 
         for idx, setter in enumerate(setters):
             try:
-                setter()
-                logger.debug("Successfully set property '%s' using method %d (value: %s)", prop_name, idx, value)
+                result = setter()
+                # Some setters might return a value, others return None - both are OK
+                logger.info("✓ Successfully set property '%s' using method %d (value: %s, result: %s, stream: %s)", 
+                          prop_name, idx, value, result, 
+                          getattr(stream_obj, "Name", "unknown"))
                 return True
             except Exception as e:
-                logger.debug("Property setter %d failed for '%s': %s", idx, prop_name, str(e)[:100])
+                error_msg = str(e)
+                # Log all errors for debugging - we need to see what's failing
+                logger.warning("✗ Property setter %d failed for '%s' (value: %s): %s", 
+                             idx, prop_name, value, error_msg[:200])
                 continue
-        logger.warning("All property setters failed for '%s' (value: %s, stream type: %s)", prop_name, value, type(stream_obj).__name__)
+        logger.error("All %d property setters failed for '%s' (value: %s, stream type: %s, has_SetProp: %s, has_SetPropertyValue: %s)", 
+                     len(setters), prop_name, value, type(stream_obj).__name__, 
+                     hasattr(stream_obj, "SetProp"), 
+                     hasattr(stream_obj, "SetPropertyValue"))
         return False
 
     def _resolve_stream_object(self, flowsheet, stream_name: str, stream_obj):
