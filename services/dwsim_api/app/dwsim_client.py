@@ -2359,6 +2359,37 @@ class DWSIMClient:
                             vapor_frac = stream.GetProp('vaporfraction', 'overall', None, '', '')[0]
                         except Exception:
                             pass
+                        try:
+                            if flow is None and hasattr(stream, "GetMassFlow"):
+                                mf = stream.GetMassFlow()
+                                flow = mf * 3600 if mf is not None else None
+                        except Exception:
+                            pass
+                        try:
+                            if p is None and hasattr(stream, "GetPressure"):
+                                p_val = stream.GetPressure()
+                                p = _as_number(p_val)
+                        except Exception:
+                            pass
+                        try:
+                            if hasattr(stream, "GetOverallProp"):
+                                if t is None:
+                                    t_overall = stream.GetOverallProp("temperature")
+                                    if t_overall is not None:
+                                        t_overall = _as_number(t_overall)
+                                        if t_overall is not None:
+                                            t = t_overall - 273.15 if t_overall > 100 else t_overall
+                                if p is None:
+                                    p_overall = stream.GetOverallProp("pressure")
+                                    p = _as_number(p_overall)
+                                if flow is None:
+                                    mf_overall = stream.GetOverallProp("massflow")
+                                    if mf_overall is not None:
+                                        mf_overall = _as_number(mf_overall)
+                                        if mf_overall is not None:
+                                            flow = mf_overall * 3600 if mf_overall < 1e3 else mf_overall
+                        except Exception:
+                            pass
                     
                     # Direct attributes fallback
                     if t is None:
