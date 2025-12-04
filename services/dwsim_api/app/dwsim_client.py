@@ -1260,6 +1260,7 @@ class DWSIMClient:
                         ("GraphicObject.InputConnections", lambda: self._connect_via_graphic_input(unit_graphic, stream_obj, port) if unit_graphic else None),
                         # Flowsheet-level connection
                         ("Flowsheet.ConnectObjects", lambda: flowsheet.ConnectObjects(stream_obj, target_unit) if hasattr(flowsheet, "ConnectObjects") else None),
+                        ("Flowsheet.ConnectObject", lambda: flowsheet.ConnectObject(stream_obj, target_unit) if hasattr(flowsheet, "ConnectObject") else None),
                         ("Flowsheet.ConnectStreamToUnit", lambda: flowsheet.ConnectStreamToUnit(stream_obj, target_unit, port) if hasattr(flowsheet, "ConnectStreamToUnit") else None),
                     ]
                     
@@ -1315,6 +1316,7 @@ class DWSIMClient:
                         ("GraphicObject.OutputConnections", lambda: self._connect_via_graphic_output(unit_graphic, stream_obj, port) if unit_graphic else None),
                         # Flowsheet-level connection
                         ("Flowsheet.ConnectObjects", lambda: flowsheet.ConnectObjects(source_unit, stream_obj) if hasattr(flowsheet, "ConnectObjects") else None),
+                        ("Flowsheet.ConnectObject", lambda: flowsheet.ConnectObject(source_unit, stream_obj) if hasattr(flowsheet, "ConnectObject") else None),
                         ("Flowsheet.ConnectUnitToStream", lambda: flowsheet.ConnectUnitToStream(source_unit, stream_obj, port) if hasattr(flowsheet, "ConnectUnitToStream") else None),
                     ]
                     
@@ -1359,6 +1361,12 @@ class DWSIMClient:
                             logger.debug("Connected stream %s to unit %s via flowsheet.ConnectObjects", stream_spec.id, stream_spec.target)
                         except Exception as e:
                             logger.debug("flowsheet.ConnectObjects failed: %s", e)
+                    elif target_unit and hasattr(flowsheet, "ConnectObject"):
+                        try:
+                            flowsheet.ConnectObject(stream_obj, target_unit)
+                            logger.debug("Connected stream %s to unit %s via flowsheet.ConnectObject", stream_spec.id, stream_spec.target)
+                        except Exception as e:
+                            logger.debug("flowsheet.ConnectObject failed: %s", e)
                 
                 if stream_spec.source:
                     source_unit = unit_map.get(stream_spec.source)
@@ -1368,6 +1376,12 @@ class DWSIMClient:
                             logger.debug("Connected stream %s from unit %s via flowsheet.ConnectObjects", stream_spec.id, stream_spec.source)
                         except Exception as e:
                             logger.debug("flowsheet.ConnectObjects failed: %s", e)
+                    elif source_unit and hasattr(flowsheet, "ConnectObject"):
+                        try:
+                            flowsheet.ConnectObject(source_unit, stream_obj)
+                            logger.debug("Connected stream %s from unit %s via flowsheet.ConnectObject", stream_spec.id, stream_spec.source)
+                        except Exception as e:
+                            logger.debug("flowsheet.ConnectObject failed: %s", e)
                 
                 # Method 2: Try setting connections through GraphicObjects after calculation prep
                 # This might work if DWSIM needs objects to be fully initialized first
