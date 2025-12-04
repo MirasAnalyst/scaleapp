@@ -543,6 +543,39 @@ class DWSIMClient:
                         prop_info["temperature_read_error"] = "GetProp not available"
                         prop_info["pressure_read_back_kpa"] = None
                         prop_info["pressure_read_error"] = "GetProp not available"
+
+                    # Fallback: direct attributes / phase properties for diagnostics
+                    if prop_info.get("temperature_read_back_k") is None:
+                        try:
+                            temp_attr = getattr(stream_obj, "Temperature", None)
+                            if temp_attr is not None:
+                                prop_info["temperature_read_back_k"] = float(temp_attr)
+                                prop_info["temperature_read_error"] = None
+                        except Exception:
+                            pass
+                        if prop_info.get("temperature_read_back_k") is None:
+                            phase_temp = self._read_phase_property(stream_obj, "temperature")
+                            if phase_temp is not None:
+                                prop_info["temperature_read_back_k"] = float(phase_temp)
+                                prop_info["temperature_read_error"] = None
+
+                    if prop_info.get("pressure_read_back_kpa") is None:
+                        try:
+                            press_attr = getattr(stream_obj, "Pressure", None)
+                            if press_attr is not None:
+                                prop_info["pressure_read_back_kpa"] = float(press_attr) / 1000.0 if press_attr > 1000 else float(press_attr)
+                                prop_info["pressure_read_error"] = None
+                        except Exception:
+                            pass
+                        if prop_info.get("pressure_read_back_kpa") is None:
+                            phase_press = self._read_phase_property(stream_obj, "pressure")
+                            if phase_press is not None:
+                                try:
+                                    val = float(phase_press)
+                                    prop_info["pressure_read_back_kpa"] = val / 1000.0 if val > 1000 else val
+                                    prop_info["pressure_read_error"] = None
+                                except Exception:
+                                    pass
                     
                     # Try GetPropertyValue as alternative - try multiple property name formats
                     if hasattr(stream_obj, "GetPropertyValue"):
@@ -1707,9 +1740,80 @@ class DWSIMClient:
             return cast_stream
         return None
 
+    def _to_si_value(self, prop_name: str, unit: str, value):
+        """Convert common properties to SI units for direct setters/attributes."""
+        if value is None:
+            return None
+        u = (unit or "").lower()
+        try:
+            if prop_name.lower() == "temperature":
+                if u in ("c", "degc", "celsius"):
+                    return float(value) + 273.15
+                return float(value)  # assume already K
+            if prop_name.lower() == "pressure":
+                if u == "kpa":
+                    return float(value) * 1000.0
+                if u == "bar":
+                    return float(value) * 100000.0
+                return float(value)  # assume Pa or already correct
+            if prop_name.lower() in ("totalflow", "massflow"):
+                if u == "kg/h":
+                    return float(value) / 3600.0
+                return float(value)  # assume kg/s
+        except Exception:
+            return value
+        return value
+
+    def _set_phase_property(self, stream_obj, prop_name: str, value):
+        """Best-effort setter using Phases collection if available."""
+        try:
+            phases = getattr(stream_obj, "Phases", None)
+            if not phases:
+                return None
+            for key in (0, "Overall", "overall", "MIXED"):
+                try:
+                    phase = phases[key]
+                except Exception:
+                    continue
+                props = getattr(phase, "Properties", None)
+                if not props:
+                    continue
+                for attr in (prop_name, prop_name.title(), prop_name.lower(), prop_name.upper()):
+                    if hasattr(props, attr):
+                        setattr(props, attr, value)
+                        return True
+        except Exception:
+            return None
+        return None
+
+    def _read_phase_property(self, stream_obj, prop_name: str):
+        """Attempt to read a basic property from Phases collection."""
+        try:
+            phases = getattr(stream_obj, "Phases", None)
+            if not phases:
+                return None
+            for key in (0, "Overall", "overall", "MIXED"):
+                try:
+                    phase = phases[key]
+                except Exception:
+                    continue
+                props = getattr(phase, "Properties", None)
+                if not props:
+                    continue
+                for attr in (prop_name, prop_name.title(), prop_name.lower(), prop_name.upper()):
+                    try:
+                        if hasattr(props, attr):
+                            return getattr(props, attr)
+                    except Exception:
+                        continue
+        except Exception:
+            return None
+        return None
+
     def _set_stream_prop(self, stream_obj, prop_name, phase, comp, basis, unit, value) -> bool:
         """Attempt to set a property on a stream object using multiple APIs."""
         setters = []
+        si_value = self._to_si_value(prop_name, unit, value)
         
         # PRIORITY 1: SetProp is the canonical MaterialStream method - try this FIRST if available
         # This is the method that actually works on MaterialStream objects
@@ -1724,7 +1828,51 @@ class DWSIMClient:
             if setprop_method:
                 setters.append(lambda: setprop_method.Invoke(stream_obj, [prop_name, phase, comp, basis, unit, value]))
                 logger.debug("Using SetProp via reflection for property '%s'", prop_name)
-        
+
+        # Property-specific strong setters (SI-based)
+        pname_lower = prop_name.lower()
+        if pname_lower == "temperature":
+            for meth_name in ("SetTemperature", "set_Temperature"):
+                if hasattr(stream_obj, meth_name):
+                    m = getattr(stream_obj, meth_name)
+                    setters.append(lambda mm=m, v=si_value: mm(v))
+                else:
+                    m = self._get_dotnet_method(stream_obj, meth_name)
+                    if m:
+                        setters.append(lambda mm=m, v=si_value: mm.Invoke(stream_obj, [v]))
+            # Direct attribute
+            if hasattr(stream_obj, "Temperature"):
+                setters.append(lambda v=si_value: setattr(stream_obj, "Temperature", v))
+            # Phase properties
+            setters.append(lambda v=si_value: self._set_phase_property(stream_obj, "temperature", v))
+
+        if pname_lower == "pressure":
+            for meth_name in ("SetPressure", "set_Pressure"):
+                if hasattr(stream_obj, meth_name):
+                    m = getattr(stream_obj, meth_name)
+                    setters.append(lambda mm=m, v=si_value: mm(v))
+                else:
+                    m = self._get_dotnet_method(stream_obj, meth_name)
+                    if m:
+                        setters.append(lambda mm=m, v=si_value: mm.Invoke(stream_obj, [v]))
+            if hasattr(stream_obj, "Pressure"):
+                setters.append(lambda v=si_value: setattr(stream_obj, "Pressure", v))
+            setters.append(lambda v=si_value: self._set_phase_property(stream_obj, "pressure", v))
+
+        if pname_lower in ("totalflow", "massflow"):
+            for meth_name in ("SetMassFlow", "SetMassFlowRate", "set_MassFlow"):
+                if hasattr(stream_obj, meth_name):
+                    m = getattr(stream_obj, meth_name)
+                    setters.append(lambda mm=m, v=si_value: mm(v))
+                else:
+                    m = self._get_dotnet_method(stream_obj, meth_name)
+                    if m:
+                        setters.append(lambda mm=m, v=si_value: mm.Invoke(stream_obj, [v]))
+            for attr in ("MassFlow", "MassFlowRate", "TotalFlow"):
+                if hasattr(stream_obj, attr):
+                    setters.append(lambda a=attr, v=si_value: setattr(stream_obj, a, v))
+            setters.append(lambda v=si_value: self._set_phase_property(stream_obj, "massflow", v))
+
         # PRIORITY 2: For ISimulationObject, try SetPropertyValue (interface method)
         # CRITICAL: SetPropertyValue may need property IDs (integers) instead of strings
         stream_type_str = str(type(stream_obj)).lower()
