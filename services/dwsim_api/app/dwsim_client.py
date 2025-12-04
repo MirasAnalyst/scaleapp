@@ -2515,6 +2515,31 @@ class DWSIMClient:
                     vapor_frac = _as_number(vapor_frac)
                     liquid_frac = _as_number(1.0 - vapor_frac) if vapor_frac is not None else None
 
+                    # Last-chance readbacks if still missing
+                    try:
+                        if p is None and hasattr(stream, "GetProp"):
+                            for unit_name in ["kPa", "Pa", "bar"]:
+                                try:
+                                    p_val = stream.GetProp('pressure', 'overall', None, '', unit_name)[0]
+                                    p_val = _as_number(p_val)
+                                    if p_val is not None:
+                                        p = p_val
+                                        break
+                                except Exception:
+                                    continue
+                        if flow is None and hasattr(stream, "GetProp"):
+                            for unit_name in ["kg/s", "kg/h"]:
+                                try:
+                                    f_val = stream.GetProp('totalflow', 'overall', None, '', unit_name)[0]
+                                    f_val = _as_number(f_val)
+                                    if f_val is not None:
+                                        flow = f_val * 3600 if unit_name == "kg/s" else f_val
+                                        break
+                                except Exception:
+                                    continue
+                    except Exception:
+                        pass
+
                     # Final fallback to payload values to avoid nulls in results
                     try:
                         props_payload = getattr(payload_stream, "properties", {}) or {}
@@ -2529,10 +2554,15 @@ class DWSIMClient:
                     except Exception:
                         pass
 
-                    # Ensure composition defaults to payload composition if unreadable
-                    if not composition and getattr(payload, "thermo", None):
+                    # Ensure composition defaults to payload composition if unreadable or all zeros
+                    if getattr(payload, "thermo", None):
                         try:
-                            if payload.thermo.components:
+                            payload_comp = getattr(payload_stream, "properties", {}) or {}
+                            payload_comp = payload_comp.get("composition", {}) or {}
+                            if payload_comp:
+                                if not composition or sum(composition.values()) == 0.0:
+                                    composition = {comp: float(payload_comp.get(comp, 0.0)) for comp in payload.thermo.components}
+                            elif not composition:
                                 composition = {comp: 0.0 for comp in payload.thermo.components}
                         except Exception:
                             pass
