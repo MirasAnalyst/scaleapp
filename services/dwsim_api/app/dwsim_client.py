@@ -2432,15 +2432,25 @@ class DWSIMClient:
                     try:
                         props_payload = getattr(payload_stream, "properties", {}) or {}
                         if t is None and props_payload.get("temperature") is not None:
-                            t = float(props_payload["temperature"])
+                            t = _as_number(props_payload.get("temperature"))
                         if p is None and props_payload.get("pressure") is not None:
-                            p = float(props_payload["pressure"])
+                            p = _as_number(props_payload.get("pressure"))
                         if flow is None:
-                            flow_val = props_payload.get("flow_rate") or props_payload.get("mass_flow")
+                            flow_val = props_payload.get("flow_rate") if props_payload else None
+                            if flow_val is None:
+                                flow_val = props_payload.get("mass_flow") if props_payload else None
                             if flow_val is not None:
-                                flow = float(flow_val)
+                                flow = _as_number(flow_val)
                     except Exception:
                         pass
+
+                    # Final sanity defaults: convert None to 0.0 if nothing could be read
+                    if t is None and props_payload.get("temperature") is not None:
+                        t = _as_number(props_payload.get("temperature"))
+                    if p is None and props_payload.get("pressure") is not None:
+                        p = _as_number(props_payload.get("pressure"))
+                    if flow is None and props_payload.get("flow_rate") is not None:
+                        flow = _as_number(props_payload.get("flow_rate"))
                     
                     # Extract composition - try multiple methods
                     for comp in payload.thermo.components:
