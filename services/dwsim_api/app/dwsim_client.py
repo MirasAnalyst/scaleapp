@@ -127,72 +127,36 @@ class DWSIMClient:
             if str(self._lib_path) not in sys.path:
                 sys.path.append(str(self._lib_path))
 
-            import pythonnet
-            from pathlib import Path
+            # pythonnet 3.x exposes pythonnet.load; 2.5.x exposes clr only.
+            try:
+                import pythonnet  # type: ignore
+                pythonnet_version = getattr(pythonnet, "__version__", "unknown")
+            except ImportError:
+                pythonnet = None
+                pythonnet_version = "not-installed"
             import platform
-            
             system = platform.system()
-            
-            # On Windows, use .NET Framework (not CoreCLR) - DWSIM requires System.Windows.Forms
+
+            # On Windows, prefer .NET Framework: just importing clr is usually enough with pythonnet 2.5.x
             if system == 'Windows':
-                # Clear DOTNET_ROOT to prevent CoreCLR from being used
-                # DWSIM requires .NET Framework which has System.Windows.Forms
-                old_dotnet_root = os.environ.pop('DOTNET_ROOT', None)
-                if old_dotnet_root:
-                    logger.debug("Cleared DOTNET_ROOT to force .NET Framework instead of CoreCLR")
-                
-                # On Windows, pythonnet should use .NET Framework (which includes System.Windows.Forms)
-                # Don't set PYTHONNET_RUNTIME - let pythonnet auto-detect .NET Framework
-                try:
-                    # Try without setting runtime - pythonnet should auto-detect .NET Framework
-                    pythonnet.load()
-                    logger.info("Loaded .NET Framework runtime (auto-detected)")
-                except Exception as auto_exc:
-                    logger.debug("Auto-detection failed, trying Mono: %s", auto_exc)
+                # Clear DOTNET_ROOT to avoid CoreCLR
+                os.environ.pop('DOTNET_ROOT', None)
+                if pythonnet and hasattr(pythonnet, "load"):
                     try:
-                        os.environ['PYTHONNET_RUNTIME'] = 'mono'
-                        pythonnet.load("mono")
-                        logger.info("Loaded Mono runtime on Windows")
-                    except Exception as mono_exc:
-                        logger.error("Failed to initialize .NET runtime on Windows. Auto-detection failed: %s, Mono failed: %s", auto_exc, mono_exc)
-                        raise RuntimeError(
-                            f"Failed to initialize .NET runtime on Windows. "
-                            f"Auto-detection: {auto_exc}, Mono: {mono_exc}. "
-                            f"DWSIM requires .NET Framework 4.x (not CoreCLR). "
-                            f"Please install .NET Framework 4.x from Microsoft."
-                        ) from mono_exc
-            elif system == 'Darwin':  # macOS
-                # macOS-specific Mono paths (but won't work on Apple Silicon)
-                official_mono = '/Library/Frameworks/Mono.framework/Versions/Current/lib/libmonosgen-2.0.dylib'
-                homebrew_mono = '/opt/homebrew/lib/libmono-2.0.dylib'
-                
-                libmono_path = os.getenv('PYTHONNET_LIBMONO')
-                if not libmono_path:
-                    # Try official Mono framework first, then Homebrew
-                    if Path(official_mono).exists():
-                        libmono_path = official_mono
-                    elif Path(homebrew_mono).exists():
-                        libmono_path = homebrew_mono
-                
-                if libmono_path:
-                    os.environ['PYTHONNET_RUNTIME'] = 'mono'
-                    try:
-                        pythonnet.load("mono", libmono=libmono_path)
-                    except Exception as mono_exc:
-                        logger.debug("Failed to load Mono with explicit path: %s", mono_exc)
-                        # Try auto-discovery
-                        try:
-                            pythonnet.load("mono")
-                        except Exception:
-                            raise RuntimeError(f"Failed to initialize .NET runtime. Mono path: {libmono_path}, Error: {mono_exc}") from mono_exc
+                        pythonnet.load()
+                        logger.info("Loaded .NET Framework runtime via pythonnet (v%s)", pythonnet_version)
+                    except Exception as auto_exc:
+                        logger.debug("pythonnet.load failed on Windows: %s", auto_exc)
                 else:
-                    # Try auto-discovery
+                    logger.info("Using clr import directly (pythonnet v%s)", pythonnet_version)
+            elif system == 'Darwin':
+                if pythonnet and hasattr(pythonnet, "load"):
                     os.environ['PYTHONNET_RUNTIME'] = 'mono'
                     pythonnet.load("mono")
-            else:  # Linux
-                # On Linux, try auto-discovery (Mono should be in PATH)
-                os.environ['PYTHONNET_RUNTIME'] = 'mono'
-                pythonnet.load("mono")
+            else:
+                if pythonnet and hasattr(pythonnet, "load"):
+                    os.environ['PYTHONNET_RUNTIME'] = 'mono'
+                    pythonnet.load("mono")
 
             import clr  # type: ignore
 

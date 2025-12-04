@@ -135,7 +135,12 @@ def inspect_method_signatures(obj, method_name):
 def test_dwsim_api():
     """Test DWSIM Automation API to discover actual method names and signatures."""
     try:
-        import pythonnet
+        try:
+            import pythonnet  # type: ignore
+            if hasattr(pythonnet, "load"):
+                pythonnet.load()
+        except ImportError:
+            pythonnet = None
         import clr
         
         # Load DWSIM automation
