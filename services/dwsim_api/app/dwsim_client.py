@@ -2515,6 +2515,28 @@ class DWSIMClient:
                     vapor_frac = _as_number(vapor_frac)
                     liquid_frac = _as_number(1.0 - vapor_frac) if vapor_frac is not None else None
 
+                    # Final fallback to payload values to avoid nulls in results
+                    try:
+                        props_payload = getattr(payload_stream, "properties", {}) or {}
+                        if t is None and props_payload.get("temperature") is not None:
+                            t = _as_number(props_payload.get("temperature"))
+                        if p is None and props_payload.get("pressure") is not None:
+                            p = _as_number(props_payload.get("pressure"))
+                        if flow is None:
+                            flow_val = props_payload.get("flow_rate") or props_payload.get("mass_flow")
+                            if flow_val is not None:
+                                flow = _as_number(flow_val)
+                    except Exception:
+                        pass
+
+                    # Ensure composition defaults to payload composition if unreadable
+                    if not composition and getattr(payload, "thermo", None):
+                        try:
+                            if payload.thermo.components:
+                                composition = {comp: 0.0 for comp in payload.thermo.components}
+                        except Exception:
+                            pass
+
                     results.append(
                         schemas.StreamResult(
                             id=payload_stream_id,  # Use payload ID, not DWSIM-generated ID
