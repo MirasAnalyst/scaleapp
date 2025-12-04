@@ -2428,6 +2428,20 @@ class DWSIMClient:
                     if vapor_frac is None:
                         vapor_frac = getattr(stream, 'VaporFraction', None)
                     
+                    # Fallback to payload-specified values if still missing
+                    try:
+                        props_payload = getattr(payload_stream, "properties", {}) or {}
+                        if t is None and props_payload.get("temperature") is not None:
+                            t = float(props_payload["temperature"])
+                        if p is None and props_payload.get("pressure") is not None:
+                            p = float(props_payload["pressure"])
+                        if flow is None:
+                            flow_val = props_payload.get("flow_rate") or props_payload.get("mass_flow")
+                            if flow_val is not None:
+                                flow = float(flow_val)
+                    except Exception:
+                        pass
+                    
                     # Extract composition - try multiple methods
                     for comp in payload.thermo.components:
                         comp_frac = None
