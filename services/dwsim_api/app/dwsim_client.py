@@ -1262,6 +1262,9 @@ class DWSIMClient:
                         ("Flowsheet.ConnectObjects", lambda: flowsheet.ConnectObjects(stream_obj, target_unit) if hasattr(flowsheet, "ConnectObjects") else None),
                         ("Flowsheet.ConnectObject", lambda: flowsheet.ConnectObject(stream_obj, target_unit) if hasattr(flowsheet, "ConnectObject") else None),
                         ("Flowsheet.ConnectStreamToUnit", lambda: flowsheet.ConnectStreamToUnit(stream_obj, target_unit, port) if hasattr(flowsheet, "ConnectStreamToUnit") else None),
+                        # Direct attribute-based
+                        ("Unit attribute inlet setters", lambda: self._set_unit_stream_attr(target_unit, ["InletStream", "InletMaterialStream", "FeedStream", "InputStream"], stream_obj, port)),
+                        ("Unit collection inlet setters", lambda: self._set_unit_stream_attr(target_unit, ["InletStreams", "InletMaterialStreams", "InputStreams", "FeedStreams"], stream_obj, port)),
                     ]
                     
                     for method_name, method in connection_methods:
@@ -1318,6 +1321,9 @@ class DWSIMClient:
                         ("Flowsheet.ConnectObjects", lambda: flowsheet.ConnectObjects(source_unit, stream_obj) if hasattr(flowsheet, "ConnectObjects") else None),
                         ("Flowsheet.ConnectObject", lambda: flowsheet.ConnectObject(source_unit, stream_obj) if hasattr(flowsheet, "ConnectObject") else None),
                         ("Flowsheet.ConnectUnitToStream", lambda: flowsheet.ConnectUnitToStream(source_unit, stream_obj, port) if hasattr(flowsheet, "ConnectUnitToStream") else None),
+                        # Direct attribute-based
+                        ("Unit attribute outlet setters", lambda: self._set_unit_stream_attr(source_unit, ["OutletStream", "OutletMaterialStream", "ProductStream", "OutputStream"], stream_obj, port)),
+                        ("Unit collection outlet setters", lambda: self._set_unit_stream_attr(source_unit, ["OutletStreams", "OutletMaterialStreams", "OutputStreams", "ProductStreams"], stream_obj, port)),
                     ]
                     
                     for method_name, method in connection_methods:
@@ -1502,6 +1508,37 @@ class DWSIMClient:
             return None
         except Exception:
             return None
+
+    def _set_unit_stream_attr(self, unit_obj, attr_names, stream_obj, port: int) -> bool:
+        """Best-effort setter for unit inlet/outlet attributes/collections."""
+        for attr in attr_names:
+            try:
+                if not hasattr(unit_obj, attr):
+                    continue
+                target = getattr(unit_obj, attr)
+                # If it's indexable (list/array/dict)
+                if hasattr(target, "__setitem__"):
+                    try:
+                        target[port] = stream_obj
+                        return True
+                    except Exception:
+                        pass
+                # Has Add method
+                if hasattr(target, "Add"):
+                    try:
+                        target.Add(stream_obj)
+                        return True
+                    except Exception:
+                        pass
+                # Direct attribute set
+                try:
+                    setattr(unit_obj, attr, stream_obj)
+                    return True
+                except Exception:
+                    pass
+            except Exception:
+                continue
+        return False
 
     def _configure_units(self, flowsheet, units: List[schemas.UnitSpec], unit_map: dict, warnings: List[str]) -> None:
         """Configure unit operation parameters."""
