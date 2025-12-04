@@ -2365,12 +2365,35 @@ class DWSIMClient:
                         t_attr = getattr(stream, 'Temperature', None)
                         if t_attr is not None:
                             t = t_attr - 273.15 if t_attr > 100 else t_attr
+                        elif hasattr(self, "_read_phase_property"):
+                            try:
+                                t_phase = self._read_phase_property(stream, "temperature")
+                                if t_phase is not None:
+                                    t_phase = float(t_phase)
+                                    t = t_phase - 273.15 if t_phase > 100 else t_phase
+                            except Exception:
+                                pass
                     if p is None:
                         p = getattr(stream, 'Pressure', None)
+                        if p is None and hasattr(self, "_read_phase_property"):
+                            try:
+                                p_phase = self._read_phase_property(stream, "pressure")
+                                if p_phase is not None:
+                                    p = float(p_phase) / 1000.0 if p_phase > 1000 else float(p_phase)
+                            except Exception:
+                                pass
                     if flow is None:
                         flow_attr = getattr(stream, 'MassFlow', None) or getattr(stream, 'TotalFlow', None)
                         if flow_attr is not None:
                             flow = flow_attr * 3600 if flow_attr < 1e3 else flow_attr
+                        elif hasattr(self, "_read_phase_property"):
+                            try:
+                                mf_phase = self._read_phase_property(stream, "massflow")
+                                if mf_phase is not None:
+                                    mf_phase = float(mf_phase)
+                                    flow = mf_phase * 3600 if mf_phase < 1e3 else mf_phase
+                            except Exception:
+                                pass
                     if vapor_frac is None:
                         vapor_frac = getattr(stream, 'VaporFraction', None)
                     
