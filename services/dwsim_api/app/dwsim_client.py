@@ -25,6 +25,8 @@ class DWSIMClient:
         self._automation = None
         self._object_type_enum = None
         self._object_type_cache = {}
+        self._last_flowsheet = None
+        self._last_stream_map = {}
         
         # Detect platform and set appropriate default path
         import platform
@@ -317,6 +319,9 @@ class DWSIMClient:
                 flowsheet = self._automation.CreateFlowsheet()
             except (AttributeError, TypeError):
                 flowsheet = self._automation.NewFlowsheet()
+
+        # Keep a reference for debugging/inspection
+        self._last_flowsheet = flowsheet
         
         warnings: List[str] = []
         
@@ -327,8 +332,9 @@ class DWSIMClient:
             # Step 2: Add components to flowsheet
             self._add_components(flowsheet, payload.thermo.components, warnings)
             
-            # Step 3: Create material streams
-            stream_map = self._create_streams(flowsheet, payload.streams, warnings)
+        # Step 3: Create material streams
+        stream_map = self._create_streams(flowsheet, payload.streams, warnings)
+        self._last_stream_map = stream_map
             
             # Step 4: Create unit operations
             unit_map = self._create_units(flowsheet, payload.units, warnings)
