@@ -27,6 +27,7 @@ class DWSIMClient:
         self._object_type_cache = {}
         self._last_flowsheet = None
         self._last_stream_map = {}
+        self._active_property_package = None
         
         # Detect platform and set appropriate default path
         import platform
@@ -664,8 +665,9 @@ class DWSIMClient:
             for method in set_methods:
                 try:
                     method()
-                    logger.info("Set property package to: %s", dwsim_package)
+                    logger.info("Set property package to: {}", dwsim_package)
                     success = True
+                    self._active_property_package = dwsim_package
                     break
                 except (AttributeError, TypeError) as e:
                     last_error = e
@@ -681,6 +683,7 @@ class DWSIMClient:
                             setattr(flowsheet, 'PropertyPackage', dwsim_package)
                             logger.info("Set property package to: Peng-Robinson (fallback)")
                             success = True
+                            self._active_property_package = dwsim_package
                             warnings.append("ThermoC property package unavailable, using Peng-Robinson")
                             break
                         except Exception:
@@ -693,6 +696,7 @@ class DWSIMClient:
                 if last_error:
                     error_msg += f": {last_error}"
                 warnings.append(error_msg)
+                self._active_property_package = None
         except Exception as exc:
             logger.warning("Failed to configure property package: %s", exc)
             warnings.append(f"Property package configuration error: {str(exc)}")
@@ -747,26 +751,21 @@ class DWSIMClient:
             x = stream_spec.properties.get("x", 100) if stream_spec.properties else 100
             y = stream_spec.properties.get("y", 100) if stream_spec.properties else 100
             
-            # Try multiple method signatures and approaches
+            # Try multiple method signatures and approaches (ordered by likelihood of returning MaterialStream)
             method_attempts = []
-            if stream_enum is not None:
-                method_attempts.extend([
-                    ("AddObject(enum, coords)", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddObject(stream_enum, float(x_coord), float(y_coord), sn)),
-                    ("AddObject(enum)", lambda sn=stream_name: flowsheet.AddObject(stream_enum, sn) if hasattr(flowsheet, 'AddObject') else None),
-                ])
-                if hasattr(flowsheet, 'AddFlowsheetObject'):
-                    method_attempts.extend([
-                        ("AddFlowsheetObject(enum, coords)", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddFlowsheetObject(stream_enum, sn, float(x_coord), float(y_coord))),
-                        ("AddFlowsheetObject(enum)", lambda sn=stream_name: flowsheet.AddFlowsheetObject(stream_enum, sn)),
-                    ])
-                if hasattr(flowsheet, 'AddSimulationObject'):
-                    method_attempts.extend([
-                        ("AddSimulationObject(enum, coords)", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddSimulationObject(stream_enum, sn, float(x_coord), float(y_coord))),
-                        ("AddSimulationObject(enum)", lambda sn=stream_name: flowsheet.AddSimulationObject(stream_enum, sn)),
-                    ])
-            
-            # Prioritize the working signature observed on Windows: AddFlowsheetObject("Material Stream", name)
-            method_attempts.insert(0, ("AddFlowsheetObject('Material Stream')", lambda sn=stream_name: flowsheet.AddFlowsheetObject("Material Stream", sn) if hasattr(flowsheet, 'AddFlowsheetObject') else None))
+
+            # Prefer stream-specific helpers first
+            if hasattr(flowsheet, 'CreateMaterialStream'):
+                method_attempts.append(("CreateMaterialStream", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.CreateMaterialStream(sn, x_coord, y_coord)))
+            if hasattr(flowsheet, 'AddMaterialStream'):
+                method_attempts.append(("AddMaterialStream", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddMaterialStream(sn, x_coord, y_coord)))
+            if hasattr(flowsheet, 'NewMaterialStream'):
+                method_attempts.append(("NewMaterialStream", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.NewMaterialStream(sn, x_coord, y_coord)))
+
+            # Known working signature on Windows builds
+            if hasattr(flowsheet, 'AddFlowsheetObject'):
+                method_attempts.append(("AddFlowsheetObject('Material Stream')", lambda sn=stream_name: flowsheet.AddFlowsheetObject("Material Stream", sn)))
+
             for type_name in ["Material Stream", "MaterialStream"]:
                 if hasattr(flowsheet, 'AddFlowsheetObject'):
                     method_attempts.extend([
@@ -788,30 +787,41 @@ class DWSIMClient:
                     (f"AddObject('{type_name}')", lambda tn=type_name, sn=stream_name: flowsheet.AddObject(tn, sn) if hasattr(flowsheet, 'AddObject') else None),
                 ])
 
-            method_attempts.extend([
-                ("CreateMaterialStream", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.CreateMaterialStream(sn, x_coord, y_coord) if hasattr(flowsheet, 'CreateMaterialStream') else None),
-                ("AddMaterialStream", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddMaterialStream(sn, x_coord, y_coord) if hasattr(flowsheet, 'AddMaterialStream') else None),
-                ("NewMaterialStream", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.NewMaterialStream(sn, x_coord, y_coord) if hasattr(flowsheet, 'NewMaterialStream') else None),
-                ("MaterialStreams collection fallback", lambda: self._create_stream_via_collection(flowsheet, stream_name, x, y)),
-            ])
+            if stream_enum is not None:
+                method_attempts.extend([
+                    ("AddObject(enum, coords)", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddObject(stream_enum, float(x_coord), float(y_coord), sn)),
+                    ("AddObject(enum)", lambda sn=stream_name: flowsheet.AddObject(stream_enum, sn) if hasattr(flowsheet, 'AddObject') else None),
+                ])
+                if hasattr(flowsheet, 'AddFlowsheetObject'):
+                    method_attempts.extend([
+                        ("AddFlowsheetObject(enum, coords)", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddFlowsheetObject(stream_enum, sn, float(x_coord), float(y_coord))),
+                        ("AddFlowsheetObject(enum)", lambda sn=stream_name: flowsheet.AddFlowsheetObject(stream_enum, sn)),
+                    ])
+                if hasattr(flowsheet, 'AddSimulationObject'):
+                    method_attempts.extend([
+                        ("AddSimulationObject(enum, coords)", lambda sn=stream_name, x_coord=x, y_coord=y: flowsheet.AddSimulationObject(stream_enum, sn, float(x_coord), float(y_coord))),
+                        ("AddSimulationObject(enum)", lambda sn=stream_name: flowsheet.AddSimulationObject(stream_enum, sn)),
+                    ])
+
+            method_attempts.append(("MaterialStreams collection fallback", lambda: self._create_stream_via_collection(flowsheet, stream_name, x, y)))
             
             for desc, method in method_attempts:
                 try:
                     result = method()
                     if result is not None:
                         stream_obj = result
-                        logger.debug("Created stream '%s' via %s", stream_name, desc)
+                        logger.debug("Created stream '{}' via {}", stream_name, desc)
                         break
-                    logger.debug("Stream creation method %s returned None", desc)
+                    logger.debug("Stream creation method {} returned None", desc)
                 except (TypeError, AttributeError) as e:
-                    logger.debug("Stream creation method %s failed: %s", desc, e)
+                    logger.debug("Stream creation method {} failed: {}", desc, e)
                     continue
                 except Exception as e:
-                    logger.debug("Stream creation %s failed with error: %s", desc, e)
+                    logger.debug("Stream creation {} failed with error: {}", desc, e)
                     continue
             
             if stream_obj is None:
-                logger.warning("Failed to create stream '%s' - all methods failed", stream_name)
+                logger.warning("Failed to create stream '{}' - all methods failed", stream_name)
                 warnings.append(f"Failed to create stream '{stream_name}' - DWSIM API method signature issue.")
                 continue
             
@@ -857,13 +867,18 @@ class DWSIMClient:
                     stream_map[stream_spec.id] = stream_obj
                     logger.info("✓ Casted stream %s to MaterialStream (SetProp available)", stream_spec.id)
 
+                # Bind the active property package to the stream so property setters can work
+                pkg_assigned = self._assign_property_package_to_stream(stream_obj, flowsheet)
+                if pkg_assigned:
+                    logger.debug("Bound property package to stream {}", stream_spec.id)
+
                 # Log the final stream type we'll use for property setting
                 final_type = str(type(stream_obj))
                 dotnet_type = self._get_dotnet_type(stream_obj)
-                logger.debug("Stream %s final type: %s (dotnet: %s, has SetProp: %s, has SetPropertyValue: %s)", 
-                           stream_spec.id, final_type, dotnet_type,
-                           hasattr(stream_obj, "SetProp"), 
-                           hasattr(stream_obj, "SetPropertyValue"))
+                logger.debug("Stream {} final type: {} (dotnet: {}, has SetProp: {}, has SetPropertyValue: {})", 
+                             stream_spec.id, final_type, dotnet_type,
+                             hasattr(stream_obj, "SetProp"), 
+                             hasattr(stream_obj, "SetPropertyValue"))
                 
                 # CRITICAL: If we don't have SetProp, try to get MaterialStream from collection
                 # MaterialStream implements ISimulationObject, so type checking alone isn't enough
@@ -918,8 +933,8 @@ class DWSIMClient:
                                 # Match by name or tag
                                 if item_name == stream_name or item_tag == stream_name:
                                     stream_obj = item
-                                    logger.info("✓ Resolved to MaterialStream with SetProp (by name): %s (type: %s, name: %s, tag: %s)", 
-                                              stream_spec.id, type(item).__name__, item_name, item_tag)
+                                    logger.info("✓ Resolved to MaterialStream with SetProp (by name): {} (type: {}, name: {}, tag: {})", 
+                                                stream_spec.id, type(item).__name__, item_name, item_tag)
                                     stream_map[stream_spec.id] = stream_obj  # Update the map
                                     resolved = True
                                     break
@@ -929,15 +944,15 @@ class DWSIMClient:
                                 # Use the last one (most recently created)
                                 idx, item, item_name, item_tag = streams_with_setprop[-1]
                                 stream_obj = item
-                                logger.info("✓ Resolved to most recent MaterialStream with SetProp: %s (type: %s, name: %s, tag: %s, index: %d)", 
-                                          stream_spec.id, type(item).__name__, item_name, item_tag, idx)
+                                logger.info("✓ Resolved to most recent MaterialStream with SetProp: {} (type: {}, name: {}, tag: {}, index: {})", 
+                                            stream_spec.id, type(item).__name__, item_name, item_tag, idx)
                                 stream_map[stream_spec.id] = stream_obj
                                 resolved = True
                             
                             # PRIORITY 3: If still no SetProp, try direct index access (last stream)
                             if not resolved and len(all_streams) > 0:
                                 last_stream = all_streams[-1]
-                                logger.warning("No streams with SetProp found, trying last stream in collection: type=%s", type(last_stream).__name__)
+                                logger.warning("No streams with SetProp found, trying last stream in collection: type={}", type(last_stream).__name__)
                                 # Try to cast or use directly
                                 stream_obj = self._as_material_stream(last_stream) or last_stream
                                 stream_map[stream_spec.id] = stream_obj
@@ -952,14 +967,14 @@ class DWSIMClient:
                                 resolved = True
                                 
                     except Exception as e:
-                        logger.warning("MaterialStream collection lookup failed: %s", e)
+                        logger.warning("MaterialStream collection lookup failed: {}", e)
                         import traceback
-                        logger.error("Traceback: %s", traceback.format_exc())
+                        logger.error("Traceback: {}", traceback.format_exc())
                     
                     # Final check - if we still don't have SetProp, log a critical error
                     if not hasattr(stream_obj, "SetProp"):
-                        logger.error("CRITICAL: Stream %s still doesn't have SetProp after resolution! Type: %s", 
-                                    stream_spec.id, type(stream_obj).__name__)
+                        logger.error("CRITICAL: Stream {} still doesn't have SetProp after resolution! Type: {}", 
+                                     stream_spec.id, type(stream_obj).__name__)
                         # Try one more thing - check if MaterialStreams is a dictionary and we can access by key
                         try:
                             if hasattr(flowsheet, "MaterialStreams"):
@@ -971,7 +986,7 @@ class DWSIMClient:
                                         if hasattr(dict_stream, "SetProp"):
                                             stream_obj = dict_stream
                                             stream_map[stream_spec.id] = stream_obj
-                                            logger.info("✓ Resolved via dictionary access: %s", stream_spec.id)
+                                            logger.info("✓ Resolved via dictionary access: {}", stream_spec.id)
                                     except (KeyError, TypeError):
                                         # Try accessing by index (if it's also indexable)
                                         try:
@@ -979,11 +994,11 @@ class DWSIMClient:
                                             if hasattr(dict_stream, "SetProp"):
                                                 stream_obj = dict_stream
                                                 stream_map[stream_spec.id] = stream_obj
-                                                logger.info("✓ Resolved via index access: %s", stream_spec.id)
+                                                logger.info("✓ Resolved via index access: {}", stream_spec.id)
                                         except Exception:
                                             pass
                         except Exception as e:
-                            logger.debug("Dictionary access attempt failed: %s", e)
+                            logger.debug("Dictionary access attempt failed: {}", e)
 
                 # Final attempt to expose SetProp via casting before setting properties
                 if not hasattr(stream_obj, "SetProp"):
@@ -991,15 +1006,15 @@ class DWSIMClient:
                     if cast_stream and hasattr(cast_stream, "SetProp"):
                         stream_obj = cast_stream
                         stream_map[stream_spec.id] = stream_obj
-                        logger.info("✓ Casted stream %s to MaterialStream after collection lookup", stream_spec.id)
+                        logger.info("✓ Casted stream {} to MaterialStream after collection lookup", stream_spec.id)
                 
                 # Set stream properties
                 # Verify we're using the correct object (after potential resolution)
                 final_obj_type = str(type(stream_obj))
                 final_obj_name = getattr(stream_obj, "Name", "unknown")
-                logger.info("Setting properties for stream %s using object: type=%s, name=%s, has_SetProp=%s, has_SetPropertyValue=%s", 
-                          stream_spec.id, final_obj_type, final_obj_name,
-                          hasattr(stream_obj, "SetProp"), hasattr(stream_obj, "SetPropertyValue"))
+                logger.info("Setting properties for stream {} using object: type={}, name={}, has_SetProp={}, has_SetPropertyValue={}", 
+                            stream_spec.id, final_obj_type, final_obj_name,
+                            hasattr(stream_obj, "SetProp"), hasattr(stream_obj, "SetPropertyValue"))
                 
                 props = stream_spec.properties or {}
                 
@@ -1009,14 +1024,14 @@ class DWSIMClient:
                 if temp is not None:
                     if self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "K", temp + 273.15):
                         temp_set = True
-                        logger.info("✓ Set temperature for %s: %f K", stream_spec.id, temp + 273.15)
+                        logger.info("✓ Set temperature for {}: {} K", stream_spec.id, temp + 273.15)
                     elif self._set_stream_prop(stream_obj, "temperature", "overall", None, "", "C", temp):
                         temp_set = True
-                        logger.info("✓ Set temperature for %s: %f C", stream_spec.id, temp)
+                        logger.info("✓ Set temperature for {}: {} C", stream_spec.id, temp)
                     else:
-                        logger.error("✗ Failed to set temperature for %s", stream_spec.id)
+                        logger.error("✗ Failed to set temperature for {}", stream_spec.id)
                         warnings.append(f"Stream {stream_spec.id}: Could not set temperature")
-                        logger.warning("Failed to set temperature for stream %s using all methods", stream_spec.id)
+                        logger.warning("Failed to set temperature for stream {} using all methods", stream_spec.id)
                 
                 # Pressure (in kPa)
                 pressure = props.get("pressure")
@@ -1024,10 +1039,10 @@ class DWSIMClient:
                 if pressure is not None:
                     if self._set_stream_prop(stream_obj, "pressure", "overall", None, "", "kPa", pressure):
                         pressure_set = True
-                        logger.debug("Set pressure for %s: %f kPa", stream_spec.id, pressure)
+                        logger.debug("Set pressure for {}: {} kPa", stream_spec.id, pressure)
                     else:
                         warnings.append(f"Stream {stream_spec.id}: Could not set pressure")
-                        logger.warning("Failed to set pressure for stream %s using all methods", stream_spec.id)
+                        logger.warning("Failed to set pressure for stream {} using all methods", stream_spec.id)
                 
                 # Mass flow (convert kg/h to kg/s)
                 flow = props.get("flow_rate") or props.get("mass_flow")
@@ -1047,7 +1062,7 @@ class DWSIMClient:
                             # Try SetProp-style first; if not available, skip silently (some builds expose composition elsewhere)
                             if self._set_stream_prop(stream_obj, "molefraction", "overall", comp, "", "", normalized_frac):
                                 composition_set = True
-                                logger.debug("Set composition for %s: %s = %f", stream_spec.id, comp, normalized_frac)
+                                logger.debug("Set composition for {}: {} = {}", stream_spec.id, comp, normalized_frac)
                         
                         if not composition_set:
                             # Try alternative composition setting methods
@@ -1056,9 +1071,9 @@ class DWSIMClient:
                                     comp_dict = {comp: frac / total for comp, frac in composition.items()}
                                     stream_obj.SetOverallComposition(comp_dict)
                                     composition_set = True
-                                    logger.debug("Set composition via SetOverallComposition for %s", stream_spec.id)
+                                    logger.debug("Set composition via SetOverallComposition for {}", stream_spec.id)
                             except Exception as e:
-                                logger.debug("SetOverallComposition failed: %s", e)
+                                logger.debug("SetOverallComposition failed: {}", e)
                             
                             if not composition_set:
                                 warnings.append(f"Stream {stream_spec.id}: Could not set composition")
@@ -1069,7 +1084,7 @@ class DWSIMClient:
                     self._set_stream_prop(stream_obj, "vaporfraction", "overall", None, "", "", vapor_frac)
                 
                 # Verify properties were set by reading them back
-                logger.debug("Verifying properties for stream: %s", stream_spec.id)
+                logger.debug("Verifying properties for stream: {}", stream_spec.id)
                 try:
                     if temp is not None:
                         # Try to read back temperature to verify it was set
@@ -1077,15 +1092,15 @@ class DWSIMClient:
                             if hasattr(stream_obj, "GetProp"):
                                 read_temp = stream_obj.GetProp('temperature', 'overall', None, '', 'K')[0]
                                 if read_temp:
-                                    logger.debug("Verified temperature set: %f K (requested: %f K)", read_temp, temp + 273.15)
+                                    logger.debug("Verified temperature set: {} K (requested: {} K)", read_temp, temp + 273.15)
                         except Exception:
                             pass
                 except Exception:
                     pass
                 
-                logger.debug("Created stream: %s", stream_spec.id)
+                logger.debug("Created stream: {}", stream_spec.id)
             except Exception as exc:
-                logger.warning("Failed to set properties for stream %s: %s", stream_spec.id, exc)
+                logger.warning("Failed to set properties for stream {}: {}", stream_spec.id, exc)
                 warnings.append(f"Failed to set properties for stream '{stream_spec.id}': {str(exc)}")
         
         return stream_map
@@ -1830,6 +1845,58 @@ class DWSIMClient:
         except Exception:
             return None
         return None
+
+    def _assign_property_package_to_stream(self, stream_obj, flowsheet) -> bool:
+        """Best-effort binding of the flowsheet property package to a stream."""
+        try:
+            pkg_obj = None
+            pkg_name = self._active_property_package
+
+            # Direct property on flowsheet (some builds expose PropertyPackage or SelectedPropertyPackage)
+            for attr in ("PropertyPackage", "SelectedPropertyPackage"):
+                try:
+                    candidate = getattr(flowsheet, attr, None)
+                    if candidate:
+                        pkg_obj = candidate
+                        break
+                except Exception:
+                    continue
+
+            # FlowsheetOptions.SelectedPropertyPackage (common in Automation)
+            if pkg_obj is None and hasattr(flowsheet, "FlowsheetOptions"):
+                try:
+                    opts = flowsheet.FlowsheetOptions
+                    candidate = getattr(opts, "SelectedPropertyPackage", None)
+                    if candidate:
+                        pkg_obj = candidate
+                except Exception:
+                    pass
+
+            # PropertyPackages collection by name (preferred if available)
+            if pkg_obj is None and hasattr(flowsheet, "PropertyPackages"):
+                try:
+                    pkgs = flowsheet.PropertyPackages
+                    if pkg_name:
+                        pkg_obj = self._get_collection_item(pkgs, pkg_name)
+                    if pkg_obj is None:
+                        for item in self._iterate_collection(pkgs):
+                            pkg_obj = item
+                            break
+                except Exception:
+                    pkg_obj = None
+
+            # Assign if we have something and the stream exposes PropertyPackage
+            if pkg_obj is not None and hasattr(stream_obj, "PropertyPackage"):
+                try:
+                    stream_obj.PropertyPackage = pkg_obj
+                    logger.debug("Assigned property package {} to stream {}", pkg_name or getattr(pkg_obj, 'Name', None), getattr(stream_obj, 'Name', 'unknown'))
+                    return True
+                except Exception as e:
+                    logger.debug("Failed to assign property package to stream {}: {}", getattr(stream_obj, 'Name', 'unknown'), e)
+
+        except Exception as exc:
+            logger.debug("Property package assignment error: {}", exc)
+        return False
 
     def _set_stream_prop(self, stream_obj, prop_name, phase, comp, basis, unit, value) -> bool:
         """Attempt to set a property on a stream object using multiple APIs."""
