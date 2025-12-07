@@ -879,6 +879,13 @@ class DWSIMClient:
                              stream_spec.id, final_type, dotnet_type,
                              hasattr(stream_obj, "SetProp"), 
                              hasattr(stream_obj, "SetPropertyValue"))
+
+                # Try to replace with the collection instance (often exposes more methods)
+                coll_stream = self._get_materialstream_from_collection(flowsheet, stream_name)
+                if coll_stream is not None and coll_stream is not stream_obj:
+                    stream_obj = coll_stream
+                    stream_map[stream_spec.id] = stream_obj
+                    logger.info("✓ Replaced stream {} with MaterialStreams collection instance (type: {})", stream_spec.id, type(stream_obj).__name__)
                 
                 # CRITICAL: If we don't have SetProp, try to get MaterialStream from collection
                 # MaterialStream implements ISimulationObject, so type checking alone isn't enough
@@ -1856,7 +1863,7 @@ class DWSIMClient:
             for attr in ("PropertyPackage", "SelectedPropertyPackage"):
                 try:
                     candidate = getattr(flowsheet, attr, None)
-                    if candidate:
+                    if candidate and not isinstance(candidate, str):
                         pkg_obj = candidate
                         break
                 except Exception:
@@ -1867,7 +1874,7 @@ class DWSIMClient:
                 try:
                     opts = flowsheet.FlowsheetOptions
                     candidate = getattr(opts, "SelectedPropertyPackage", None)
-                    if candidate:
+                    if candidate and not isinstance(candidate, str):
                         pkg_obj = candidate
                 except Exception:
                     pass
@@ -1880,13 +1887,13 @@ class DWSIMClient:
                         pkg_obj = self._get_collection_item(pkgs, pkg_name)
                     if pkg_obj is None:
                         for item in self._iterate_collection(pkgs):
-                            pkg_obj = item
+                            pkg_obj = getattr(item, "Value", item)
                             break
                 except Exception:
                     pkg_obj = None
 
             # Assign if we have something and the stream exposes PropertyPackage
-            if pkg_obj is not None and hasattr(stream_obj, "PropertyPackage"):
+            if pkg_obj is not None and not isinstance(pkg_obj, str) and hasattr(stream_obj, "PropertyPackage"):
                 try:
                     stream_obj.PropertyPackage = pkg_obj
                     logger.debug("Assigned property package {} to stream {}", pkg_name or getattr(pkg_obj, 'Name', None), getattr(stream_obj, 'Name', 'unknown'))
@@ -1897,6 +1904,23 @@ class DWSIMClient:
         except Exception as exc:
             logger.debug("Property package assignment error: {}", exc)
         return False
+
+    def _get_materialstream_from_collection(self, flowsheet, stream_name: str):
+        """Return a MaterialStream object from the flowsheet collection by name or last created."""
+        try:
+            coll = getattr(flowsheet, "MaterialStreams", None)
+            if not coll:
+                return None
+            candidate = self._get_collection_item(coll, stream_name)
+            if candidate:
+                return getattr(candidate, "Value", candidate)
+            items = list(self._iterate_collection(coll))
+            if items:
+                last = getattr(items[-1], "Value", items[-1])
+                return last
+        except Exception:
+            return None
+        return None
 
     def _set_stream_prop(self, stream_obj, prop_name, phase, comp, basis, unit, value) -> bool:
         """Attempt to set a property on a stream object using multiple APIs."""
