@@ -332,9 +332,9 @@ class DWSIMClient:
             # Step 2: Add components to flowsheet
             self._add_components(flowsheet, payload.thermo.components, warnings)
             
-        # Step 3: Create material streams
-        stream_map = self._create_streams(flowsheet, payload.streams, warnings)
-        self._last_stream_map = stream_map
+            # Step 3: Create material streams
+            stream_map = self._create_streams(flowsheet, payload.streams, warnings)
+            self._last_stream_map = stream_map
             
             # Step 4: Create unit operations
             unit_map = self._create_units(flowsheet, payload.units, warnings)
