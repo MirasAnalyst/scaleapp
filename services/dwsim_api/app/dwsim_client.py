@@ -1227,45 +1227,45 @@ class DWSIMClient:
                 warnings.append(f"Stream '{stream_spec.id}' not found for connection")
                 continue
             
-            # Connect to target unit (inlet) - for feed streams or intermediate streams
-            if stream_spec.target:
-                target_unit = unit_map.get(stream_spec.target)
-                if target_unit:
-                    # Resolve the actual unit object (might need to get from collection)
-                    target_unit = self._resolve_unit_object(flowsheet, stream_spec.target, target_unit)
-                    
-                    # Handle missing targetHandle gracefully (use default port 0)
-                    target_handle = getattr(stream_spec, 'targetHandle', None)
-                    port = self._map_port_to_index(target_handle, stream_spec.target)
-                    
-                    # Try multiple connection methods
-                    connected = False
-                    stream_graphic = getattr(stream_obj, "GraphicObject", None)
-                    unit_graphic = getattr(target_unit, "GraphicObject", None)
-                    
-                    connection_methods = [
-                        # Direct unit methods
-                        ("SetInletStream", lambda: target_unit.SetInletStream(port, stream_obj)),
-                        ("SetInletMaterialStream", lambda: target_unit.SetInletMaterialStream(port, stream_obj)),
-                        ("ConnectInlet", lambda: target_unit.ConnectInlet(port, stream_obj)),
-                        ("AddInletStream", lambda: target_unit.AddInletStream(port, stream_obj)),
-                        # Property-based connections
-                        ("InletStreams[index]", lambda: setattr(target_unit, f"InletStreams[{port}]", stream_obj) if hasattr(target_unit, "InletStreams") else None),
-                        ("InletMaterialStreams[index]", lambda: setattr(target_unit, f"InletMaterialStreams[{port}]", stream_obj) if hasattr(target_unit, "InletMaterialStreams") else None),
-                        # Try without port index
-                        ("SetInletStream(no port)", lambda: target_unit.SetInletStream(stream_obj) if hasattr(target_unit, "SetInletStream") else None),
-                        ("SetInletMaterialStream(no port)", lambda: target_unit.SetInletMaterialStream(stream_obj) if hasattr(target_unit, "SetInletMaterialStream") else None),
-                        # GraphicObject-based connections
-                        ("GraphicObject.Connections", lambda: self._connect_via_graphic_object(stream_graphic, unit_graphic, port, True) if stream_graphic and unit_graphic else None),
-                        ("GraphicObject.InputConnections", lambda: self._connect_via_graphic_input(unit_graphic, stream_obj, port) if unit_graphic else None),
-                        # Flowsheet-level connection
-                        ("Flowsheet.ConnectObjects", lambda: flowsheet.ConnectObjects(stream_obj, target_unit) if hasattr(flowsheet, "ConnectObjects") else None),
-                        ("Flowsheet.ConnectObject", lambda: flowsheet.ConnectObject(stream_obj, target_unit) if hasattr(flowsheet, "ConnectObject") else None),
-                        ("Flowsheet.ConnectStreamToUnit", lambda: flowsheet.ConnectStreamToUnit(stream_obj, target_unit, port) if hasattr(flowsheet, "ConnectStreamToUnit") else None),
-                        # Direct attribute-based
-                        ("Unit attribute inlet setters", lambda: self._set_unit_stream_attr(target_unit, ["InletStream", "InletMaterialStream", "FeedStream", "InputStream"], stream_obj, port)),
-                        ("Unit collection inlet setters", lambda: self._set_unit_stream_attr(target_unit, ["InletStreams", "InletMaterialStreams", "InputStreams", "FeedStreams"], stream_obj, port)),
-                    ]
+        # Connect to target unit (inlet) - for feed streams or intermediate streams
+        if stream_spec.target:
+            target_unit = unit_map.get(stream_spec.target)
+            if target_unit:
+                # Resolve the actual unit object (might need to get from collection)
+                target_unit = self._resolve_unit_object(flowsheet, stream_spec.target, target_unit)
+                
+                # Handle missing targetHandle gracefully (use default port 0)
+                target_handle = getattr(stream_spec, 'targetHandle', None)
+                port = self._map_port_to_index(target_handle, stream_spec.target)
+                
+                # Try multiple connection methods
+                connected = False
+                stream_graphic = getattr(stream_obj, "GraphicObject", None)
+                unit_graphic = getattr(target_unit, "GraphicObject", None)
+                
+                connection_methods = [
+                    # Direct unit methods
+                    ("SetInletStream", lambda: target_unit.SetInletStream(port, stream_obj)),
+                    ("SetInletMaterialStream", lambda: target_unit.SetInletMaterialStream(port, stream_obj)),
+                    ("ConnectInlet", lambda: target_unit.ConnectInlet(port, stream_obj)),
+                    ("AddInletStream", lambda: target_unit.AddInletStream(port, stream_obj)),
+                    # Property-based connections
+                    ("InletStreams[index]", lambda: setattr(target_unit, f"InletStreams[{port}]", stream_obj) if hasattr(target_unit, "InletStreams") else None),
+                    ("InletMaterialStreams[index]", lambda: setattr(target_unit, f"InletMaterialStreams[{port}]", stream_obj) if hasattr(target_unit, "InletMaterialStreams") else None),
+                    # Try without port index
+                    ("SetInletStream(no port)", lambda: target_unit.SetInletStream(stream_obj) if hasattr(target_unit, "SetInletStream") else None),
+                    ("SetInletMaterialStream(no port)", lambda: target_unit.SetInletMaterialStream(stream_obj) if hasattr(target_unit, "SetInletMaterialStream") else None),
+                    # GraphicObject-based connections
+                    ("GraphicObject.Connections", lambda: self._connect_via_graphic_object(stream_graphic, unit_graphic, port, True) if stream_graphic and unit_graphic else None),
+                    ("GraphicObject.InputConnections", lambda: self._connect_via_graphic_input(unit_graphic, stream_obj, port) if unit_graphic else None),
+                    # Flowsheet-level connection
+                    ("Flowsheet.ConnectObjects", lambda: flowsheet.ConnectObjects(stream_obj, target_unit) if hasattr(flowsheet, "ConnectObjects") else None),
+                    ("Flowsheet.ConnectObject", lambda: flowsheet.ConnectObject(stream_obj, target_unit) if hasattr(flowsheet, "ConnectObject") else None),
+                    ("Flowsheet.ConnectStreamToUnit", lambda: flowsheet.ConnectStreamToUnit(stream_obj, target_unit, port) if hasattr(flowsheet, "ConnectStreamToUnit") else None),
+                    # Direct attribute-based
+                    ("Unit attribute inlet setters", lambda: self._set_unit_stream_attr(target_unit, ["InletStream", "InletMaterialStream", "FeedStream", "InputStream", "InletObject", "Inlet"], stream_obj, port)),
+                    ("Unit collection inlet setters", lambda: self._set_unit_stream_attr(target_unit, ["InletStreams", "InletMaterialStreams", "InputStreams", "FeedStreams", "InletObjects", "Inlets"], stream_obj, port)),
+                ]
                     
                     for method_name, method in connection_methods:
                         try:
