@@ -1266,25 +1266,25 @@ class DWSIMClient:
                     ("Unit attribute inlet setters", lambda: self._set_unit_stream_attr(target_unit, ["InletStream", "InletMaterialStream", "FeedStream", "InputStream", "InletObject", "Inlet"], stream_obj, port)),
                     ("Unit collection inlet setters", lambda: self._set_unit_stream_attr(target_unit, ["InletStreams", "InletMaterialStreams", "InputStreams", "FeedStreams", "InletObjects", "Inlets"], stream_obj, port)),
                 ]
-                    
-                    for method_name, method in connection_methods:
-                        try:
-                            result = method()
-                            if result is not None or not hasattr(method, '__call__'):
-                                logger.debug("Connected stream %s to unit %s via %s (port %s)", stream_spec.id, stream_spec.target, method_name, port)
-                                connected = True
-                                break
-                        except (AttributeError, TypeError) as e:
-                            logger.debug("Connection method %s failed: %s", method_name, e)
-                            continue
-                        except Exception as e:
-                            logger.debug("Connection method %s error: %s", method_name, e)
-                            continue
-                    
-                    if not connected:
-                        warnings.append(f"Failed to connect stream '{stream_spec.id}' to unit '{stream_spec.target}' - tried all connection methods")
-                else:
-                    warnings.append(f"Target unit '{stream_spec.target}' not found for stream '{stream_spec.id}'")
+                
+                for method_name, method in connection_methods:
+                    try:
+                        result = method()
+                        if result is not None or not hasattr(method, '__call__'):
+                            logger.debug("Connected stream %s to unit %s via %s (port %s)", stream_spec.id, stream_spec.target, method_name, port)
+                            connected = True
+                            break
+                    except (AttributeError, TypeError) as e:
+                        logger.debug("Connection method %s failed: %s", method_name, e)
+                        continue
+                    except Exception as e:
+                        logger.debug("Connection method %s error: %s", method_name, e)
+                        continue
+                
+                if not connected:
+                    warnings.append(f"Failed to connect stream '{stream_spec.id}' to unit '{stream_spec.target}' - tried all connection methods")
+            else:
+                warnings.append(f"Target unit '{stream_spec.target}' not found for stream '{stream_spec.id}'")
             
             # Connect from source unit (outlet) - for product streams or intermediate streams
             if stream_spec.source:
