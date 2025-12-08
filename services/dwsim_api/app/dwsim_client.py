@@ -1913,11 +1913,14 @@ class DWSIMClient:
                 return None
             candidate = self._get_collection_item(coll, stream_name)
             if candidate:
-                return getattr(candidate, "Value", candidate)
+                candidate = getattr(candidate, "Value", candidate)
+                cast = self._try_cast_material_stream(candidate)
+                return cast or candidate
             items = list(self._iterate_collection(coll))
             if items:
                 last = getattr(items[-1], "Value", items[-1])
-                return last
+                cast = self._try_cast_material_stream(last)
+                return cast or last
         except Exception:
             return None
         return None
@@ -2144,9 +2147,9 @@ class DWSIMClient:
         if ms_candidate:
             logger.debug("Stream '%s' already exposes SetProp (or was cast) during resolution", stream_name)
             return ms_candidate
-        if hasattr(stream_obj, "SetPropertyValue"):
-            logger.debug("Stream '%s' exposes SetPropertyValue; keeping for now", stream_name)
-            return stream_obj
+
+        # Keep a fallback to the incoming object if nothing better is found
+        fallback_obj = stream_obj
         
         # If it's ISimulationObject, we need to find the actual MaterialStream
         for attr in ["MaterialStreams", "SimulationObjects"]:
@@ -2198,6 +2201,11 @@ class DWSIMClient:
                     logger.debug("Resolved stream '%s' via %s collection (type contains 'stream')", stream_name, attr)
                     return item
         
+        # If we reach here, we could not find a MaterialStream with SetProp
+        if hasattr(fallback_obj, "SetPropertyValue"):
+            logger.debug("Stream '%s' lacks SetProp but has SetPropertyValue; keeping fallback object", stream_name)
+            return fallback_obj
+
         logger.debug("Stream '%s' could not be resolved to MaterialStream, using original object", stream_name)
         return stream_obj
 
