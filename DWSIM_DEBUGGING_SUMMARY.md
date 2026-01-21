@@ -117,3 +117,5 @@ To debug further, we need to see the Windows VM API service logs showing:
 - MaterialStream collection lookup results
 - Any error messages or exceptions
 
+
+
