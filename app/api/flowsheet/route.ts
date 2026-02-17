@@ -1,16 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
-// Lazy initialization of OpenAI client
-function getOpenAI() {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY environment variable is not set');
-  }
-  return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-  });
-}
-
 export interface FlowNode {
   id: string;
   type: string;
@@ -41,28 +31,14 @@ export interface FlowSheetData {
   edges: FlowEdge[];
   dwsimInstructions: string;
   description: string;
+  thermo?: {
+    package: string;
+    components: string[];
+  };
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const { prompt, retryCount = 0 } = await request.json();
-
-    if (!prompt) {
-      return NextResponse.json(
-        { error: 'Prompt is required' },
-        { status: 400 }
-      );
-    }
-
-    // Check if OpenAI API key is available
-    if (!process.env.OPENAI_API_KEY) {
-      return NextResponse.json(
-        { error: 'OpenAI API key is not configured. Please set OPENAI_API_KEY environment variable.' },
-        { status: 500 }
-      );
-    }
-
-    const systemPrompt = `You are a chemical engineering expert specializing in process flowsheets and DWSIM simulation. 
+// Static system prompt — cached via Anthropic prompt caching to save tokens
+const FLOWSHEET_SYSTEM_PROMPT = `You are a chemical engineering expert specializing in process flowsheets and DWSIM simulation.
     Convert natural language process descriptions into structured flowsheet data that can be executed in DWSIM.
 
     IMPORTANT: Generate flowsheets compatible with DWSIM's capabilities. The flowsheet will be executed in DWSIM, not Aspen HYSYS.
@@ -70,7 +46,7 @@ export async function POST(request: NextRequest) {
 
     CRITICAL: Return ONLY valid JSON. Do NOT include markdown code blocks, explanations, or any other text.
     Return ONLY the JSON object starting with { and ending with }.
-    
+
     Required JSON format:
     {
       "nodes": [
@@ -97,9 +73,149 @@ export async function POST(request: NextRequest) {
           "markerEnd": {"type": "arrowclosed", "width": 20, "height": 20, "color": "#6B7280"}
         }
       ],
+      "thermo": {
+        "package": "Peng-Robinson",
+        "components": ["water", "methane", "ethane"]
+      },
       "dwsimInstructions": "Step-by-step DWSIM setup instructions",
       "description": "Brief description of the process"
     }
+
+    🧪 THERMODYNAMIC CONFIGURATION (MANDATORY):
+    The "thermo" object MUST be included in every response. It tells the simulation engine which
+    thermodynamic model and chemical components to use.
+
+    - "package": Choose the RIGHT property package for the chemistry:
+      * "Peng-Robinson" — hydrocarbons, natural gas, refinery, gas processing (DEFAULT)
+      * "SRK" — similar to PR, good for H2-rich systems and gas processing
+      * "NRTL" — polar/non-ideal liquids: water-alcohol, water-acid, amine treating
+      * "UNIFAC" — when binary interaction data is unavailable, group-contribution estimation
+      * "UNIQUAC" — strongly non-ideal liquid mixtures, LLE problems
+
+    - "components": List ALL chemical species present in the process using common names.
+      Use IUPAC or common names the chemicals database recognizes:
+      * Hydrocarbons: "methane", "ethane", "propane", "n-butane", "i-butane", "n-pentane", "n-hexane", "benzene", "toluene"
+      * Gases: "hydrogen", "nitrogen", "oxygen", "carbon dioxide", "carbon monoxide", "hydrogen sulfide"
+      * Polar: "water", "methanol", "ethanol", "acetone", "acetic acid", "ammonia"
+      * Others: "diethyl ether", "cyclohexane", "styrene", "phenol"
+
+    📊 FEED STREAM DATA (MANDATORY for simulation):
+    Every feed stream (the FIRST edge entering the process, i.e. the edge going into the first
+    piece of equipment) MUST have complete thermodynamic data in edge.data:
+    - "temperature": temperature in °C (e.g., 25.0)
+    - "pressure": pressure in kPa (e.g., 101.325 for atmospheric, 2000.0 for high pressure)
+    - "flow_rate": mass flow in kg/h (e.g., 3600.0)
+    - "composition": mole fractions as object, MUST sum to 1.0 (e.g., {"methane": 0.7, "ethane": 0.2, "propane": 0.1})
+    - All components listed in thermo.components MUST appear in the composition (use 0.0 for absent components)
+
+    EXAMPLE feed edge with proper data:
+    {
+      "id": "feed-01",
+      "source": "feed-source-1",
+      "sourceHandle": "out-right",
+      "target": "sep-1",
+      "targetHandle": "feed-left",
+      "type": "step",
+      "label": "Well Fluid Feed",
+      "data": {
+        "temperature": 85,
+        "pressure": 4500,
+        "flow_rate": 125000,
+        "composition": {"methane": 0.42, "ethane": 0.08, "propane": 0.06, "n-butane": 0.04, "water": 0.40}
+      }
+    }
+
+    IMPORTANT: The "data" field on feed edges is what drives the simulation.
+    Without temperature, pressure, and composition, the simulation engine cannot calculate anything.
+    Internal streams between equipment do NOT need data — they will be calculated by the solver.
+
+    PROCESS-SPECIFIC FEED STREAMS (use these as starting points):
+
+    Natural Gas Well Fluid:
+      temperature: 60-80, pressure: 5000-8000, flow_rate: 50000-200000
+      composition: methane 0.70-0.85, ethane 0.05-0.10, propane 0.03-0.05,
+      n-butane 0.01-0.03, carbon dioxide 0.01-0.05, hydrogen sulfide 0.00-0.02, water 0.02-0.05
+
+    Crude Oil (light):
+      temperature: 60-80, pressure: 1000-3000, flow_rate: 100000-500000
+      composition: Use pseudo-components or representative cuts
+
+    Refinery Naphtha:
+      temperature: 80-120, pressure: 500-1500, flow_rate: 50000-200000
+      composition: n-pentane 0.15, n-hexane 0.30, benzene 0.10, toluene 0.20, cyclohexane 0.25
+
+    Water-Alcohol (distillation):
+      temperature: 25-30, pressure: 101.325, flow_rate: 5000-20000
+      composition: ethanol 0.10-0.40, water 0.60-0.90
+
+    Amine Treating (sour gas):
+      temperature: 40-50, pressure: 3000-7000, flow_rate: 100000-300000
+      composition: methane 0.80, carbon dioxide 0.05-0.15, hydrogen sulfide 0.01-0.05, water 0.02
+
+    🔧 EQUIPMENT PARAMETERS — use these EXACT keys in node.data.parameters:
+
+    Pump:
+      outlet_pressure_kpa (number) — discharge pressure in kPa
+      OR pressure_rise_kpa (number) — differential pressure in kPa
+      efficiency (number, 0.70-0.85, default 0.75)
+
+    Compressor:
+      outlet_pressure_kpa (number) — discharge pressure in kPa
+      OR pressure_ratio (number, 2-5 per stage)
+      efficiency (number, 0.72-0.82, default 0.80)
+
+    Turbine / Expander:
+      outlet_pressure_kpa (number) — exhaust pressure
+      OR pressure_ratio (number) — expansion ratio
+      efficiency (number, 0.75-0.85, default 0.80)
+
+    Valve:
+      outlet_pressure_kpa (number) — downstream pressure
+      OR pressure_drop_kpa (number) — pressure drop across valve
+
+    Heater / Cooler (heaterCooler, firedHeater, boiler, condenser, airCooler, kettleReboiler):
+      outlet_temperature_c (number) — outlet temperature in Celsius
+      OR duty_kw (number) — heat duty in kW (positive = heating)
+      pressure_drop_kpa (number, default 0, typically 10-50)
+
+    Shell & Tube Heat Exchanger (shellTubeHX):
+      hot_outlet_temperature_c OR cold_outlet_temperature_c OR duty_kw
+      hot_pressure_drop_kpa (default 0)
+      cold_pressure_drop_kpa (default 0)
+
+    Flash Drum / Separator (flashDrum, separator, separator3p, knockoutDrumH, surgeDrum):
+      temperature_c (number) — flash temperature
+      pressure_kpa (number) — flash pressure
+
+    Mixer:
+      outlet_pressure_kpa (number, optional — defaults to min of inlet pressures)
+
+    Splitter:
+      fractions (array of numbers summing to 1.0, e.g. [0.5, 0.5])
+
+    Distillation Column (distillationColumn, packedColumn, absorber, stripper):
+      light_key (string) — light key component name (MANDATORY — must match a thermo component)
+      heavy_key (string) — heavy key component name (MANDATORY — must match a thermo component)
+      light_key_recovery (number, 0.95-0.995, default 0.99)
+      heavy_key_recovery (number, 0.95-0.995, default 0.99)
+      reflux_ratio_multiple (number, 1.2-1.5 of minimum, default 1.3)
+      condenser_pressure_kpa (number — column top pressure)
+      reboiler_pressure_kpa (number — column bottom pressure)
+      n_stages (number, optional — overrides Fenske calculation)
+
+    Conversion Reactor (conversionReactor, cstr, pfr):
+      reactions (array of stoichiometric reaction objects):
+        e.g. [{"reactants": {"ethanol": 1}, "products": {"ethylene": 1, "water": 1}, "conversion": 0.95, "base_component": "ethanol"}]
+        - "reactants": object mapping component name → stoichiometric coefficient
+        - "products": object mapping component name → stoichiometric coefficient
+        - "conversion": fractional conversion (0–1) of the base component
+        - "base_component": the reactant whose conversion is specified
+      temperature_c OR outlet_temperature_c (number)
+      pressure_kpa OR outlet_pressure_kpa (number)
+
+    CRITICAL for distillation: light_key and heavy_key MUST be set to actual component
+    names from the thermo.components list. Pick the two adjacent-boiling components
+    that define the desired separation split.
 
     🧪 DWSIM-SUPPORTED UNIT OPERATIONS (use these EXACT types):
     - distillationColumn (DistillationColumn - with reboiler and condenser)
@@ -164,23 +280,23 @@ export async function POST(request: NextRequest) {
     - vapor_fraction: vapor fraction 0-1 (optional)
 
     🔌 PORT CONNECTIONS - Use these EXACT handle IDs for proper PHYSICAL positioning:
-    
+
     **Distillation Columns & Towers (vertical equipment):**
     - distillationColumn, packedColumn, absorber, stripper
     - Inlets: reflux-top (top of column), feed-stage-6, feed-stage-8, feed-stage-10, feed-stage-12, feed-stage-18 (side at feed stage), feed-left, in-left
     - Outlets: overhead-top (top of column), bottoms-bottom (bottom of column), sidedraw-<n>-<phase> (side at stage)
     - LOGICAL POSITIONING: Vapor products exit from TOP, liquid products exit from BOTTOM
-    
+
     **Separators (vertical equipment):**
     - separator3p: Inlets: feed-left (side) | Outlets: gas-top (top), oil-right (side), water-bottom (bottom)
     - separator, flashDrum, surgeDrum, knockoutDrumH: Inlets: feed-left (side) | Outlets: vapor-top (top), liquid-bottom (bottom)
     - LOGICAL POSITIONING: Gas/vapor exits TOP, heavy liquid exits BOTTOM, light liquid exits SIDE
-    
+
     **Rotating Equipment (horizontal flow):**
     - pump, recipPump, compressor, recipCompressor, turbine
     - Inlets: suction-left (left side) | Outlets: discharge-right (right side)
     - LOGICAL POSITIONING: Flow is LEFT to RIGHT (suction → discharge)
-    
+
     **Heat Exchangers (horizontal flow):**
     - shellTubeHX, plateHX, doublePipeHX, heaterCooler, condenser, airCooler
     - Hot side: hot-in-left (left), hot-out-right (right)
@@ -190,12 +306,12 @@ export async function POST(request: NextRequest) {
     - For coolers/condensers: Connect the hot process stream (hot-in-left → hot-out-right)
     - For heaters: Connect the cold process stream (cold-in-bottom → cold-out-top)
     - If both sides are used, connect BOTH hot and cold streams with separate edges
-    
+
     **Valves (horizontal flow):**
     - valve, controlValve, checkValve, throttleValve
     - Inlets: in-left (left side) | Outlets: out-right (right side)
     - LOGICAL POSITIONING: Flow is LEFT to RIGHT
-    
+
     **Tanks & Vessels (vertical flow):**
     - tank: Inlets: in-top (top) | Outlets: out-bottom (bottom)
     - mixer: Inlets: in-1-left, in-2-left, in-3-left (sides) | Outlets: out-right (right side)
@@ -213,6 +329,22 @@ export async function POST(request: NextRequest) {
     - Heat exchangers: never cross-connect hot/cold sides
     - Auto-correct wrong ports and note corrections in dwsimInstructions
 
+    CRITICAL TOPOLOGY RULES:
+    6. Every unit MUST have at least one INCOMING edge (except label/source nodes)
+    7. Mixers MUST have TWO or MORE incoming edges from upstream equipment or feed sources
+    8. For a mixer: create separate feed label nodes, then create edges FROM each feed label TO the mixer
+    9. Feed data (T, P, composition, flow_rate) MUST be on edges ENTERING the first equipment unit
+    10. Internal edges between equipment MUST have empty data:{} — the solver computes them
+    11. Do NOT put feed data on edges LEAVING a mixer — put it on edges ENTERING the mixer
+
+    WRONG (mixer has no incoming edges):
+      mixer → heater  [data: {T: 320, P: 3000, composition: {...}}]
+
+    RIGHT (feed edges go INTO mixer):
+      feed-naphtha → mixer  [data: {T: 80, P: 3000, composition: {...}}]
+      feed-hydrogen → mixer  [data: {T: 25, P: 3000, composition: {...}}]
+      mixer → heater         [data: {}]
+
     🗺️ Layout (positions) & naming:
     - Place nodes left-to-right from feed to product (x: 0–1200, y: 0–1000)
     - CRITICAL SPACING REQUIREMENTS:
@@ -222,7 +354,7 @@ export async function POST(request: NextRequest) {
       * Ensure clear visual separation so users can easily follow "what goes after what"
     - Align parallel trains horizontally with generous spacing
     - Use the full available space (x: 0–1200, y: 0–1000) to spread equipment out
-    
+
     📐 SPECIFIC POSITIONING GUIDELINES:
     - Separators: Position at x: 100-200, y: 200-400
     - Pumps: Position at x: 400-500, y: 100-600 (with 250px vertical spacing between pumps)
@@ -231,16 +363,35 @@ export async function POST(request: NextRequest) {
     - Tanks: Position at x: 900-1000, y: 200-600
     - For 3 parallel trains: Use y: 100, 400, 700 for clear separation
     - For 2 parallel trains: Use y: 200, 500 for clear separation
-    
+
+    📏 REFERENCE OPERATING CONDITIONS (use these as guides for realistic HYSYS-equivalent values):
+    - Atmospheric crude distillation: feed 350-370°C, 150-200 kPa, reflux ratio 1.5-3.0
+    - Vacuum distillation: feed 350-400°C, 5-15 kPa, 5-10 stages
+    - Amine treating (MEA/DEA): absorber 40-50°C, 3000-7000 kPa; regenerator 110-120°C, 150-200 kPa
+    - Natural gas dehydration (TEG): absorber 30-40°C, 5000-8000 kPa
+    - NGL recovery / demethanizer: -80 to -100°C, 2500-3500 kPa
+    - Propane refrigeration: evaporator -30 to -40°C, condenser 40-50°C
+    - LNG liquefaction: -160°C, 101.325 kPa
+    - Steam methane reformer: 800-900°C, 2000-3000 kPa
+    - Water-ethanol distillation: feed 80-95°C, 101.325 kPa, 20-40 stages, reflux 2-4
+    - Benzene-toluene distillation: feed 100-110°C, 101.325 kPa, 20-30 stages
+    - Flash separation: pressure drop to 50-70% of upstream pressure
+    - Compressor intercooling: cool to 40-50°C between stages, max ratio 3-4 per stage
+    - Centrifugal pumps: efficiency 0.70-0.80, max head 200m per stage
+    - Heat exchanger approach temperature: 10-20°C (shell & tube), 5-10°C (plate)
+
+    CRITICAL: These values MUST match what an engineer would enter in Aspen HYSYS or DWSIM.
+    The simulation results must be replicable — use standard textbook conditions, not approximations.
+
     Name nodes and streams consistently:
     - Nodes: sep-1, pump-oil-1, comp-1, hx-01, col-dist-1, etc.
     - Streams: feed-01, oil-01, gas-01, water-01, overhead-01, bottoms-01, recycle-01, flare-01, steam-600kPa, cw-30C
-    
+
     When generating the flowsheet, always be detailed in the choice of equipment and unit operations, so that no major process equipment is missed. Include all unit operations that would normally appear in a DWSIM flowsheet to make the process operational (e.g., separators, pumps, compressors, heat exchangers, columns, reactors, valves, mixers, splitters).
     Only include the main process material streams that connect these units (feed streams, product streams, and intermediate streams). Do not include auxiliary or utility streams (e.g., steam, cooling water, fuel gas, flare lines, drains, vents) and do not include controller signal lines. The flowsheet should focus on the complete core process pathway as it would appear in DWSIM.
-    
+
     IMPORTANT: Use only DWSIM-supported unit operations listed above. If you need a unit type not in the list, use the closest alternative from the supported list.
-    
+
     🔗 CONNECTIVITY REQUIREMENTS (MANDATORY):
     - EVERY piece of equipment MUST be connected to at least one other piece of equipment via stream lines
     - NO equipment should be completely isolated (no connections at all)
@@ -250,7 +401,7 @@ export async function POST(request: NextRequest) {
     - If you create multiple equipment pieces, they MUST all be connected in a logical process sequence
     CRITICAL: Never create edges that connect a node to itself (source and target cannot be the same node). All edges must connect different equipment units.
     IMPORTANT: For separation processes, create separate equipment units for each product stream (e.g., separate pumps for gas, oil, water products from a separator).
-    
+
     🚨 ABSOLUTE RULE: NO COMPLETELY ISOLATED EQUIPMENT ALLOWED
     - If you create a heat exchanger, pump, compressor, separator, column, or ANY equipment, it MUST be connected
     - Every piece of equipment must have at least one connection (incoming OR outgoing)
@@ -260,7 +411,7 @@ export async function POST(request: NextRequest) {
     - Either connect all equipment to the process flow or don't create it
     - BEFORE returning JSON, verify: Every node.id in nodes[] appears in at least one edge in edges[] (as either source or target)
     - MANDATORY CHECK: Count nodes in nodes[], then count how many unique node IDs appear in edges[]. These numbers must match (every node must be in an edge)
-    
+
     🔥 HEAT EXCHANGER CONNECTIVITY (CRITICAL - READ THIS CAREFULLY):
     - Every heat exchanger (shellTubeHX, heaterCooler, condenser, airCooler) MUST be connected
     - If you create a heat exchanger node, you MUST IMMEDIATELY create edges for it in the same response
@@ -273,7 +424,7 @@ export async function POST(request: NextRequest) {
     - If you cannot logically connect a heat exchanger, DO NOT create it in the nodes array
     - MANDATORY RULE: For every heat exchanger in nodes[], there MUST be at least one edge in edges[] that has that heat exchanger as source OR target
     - CRITICAL: Every heat exchanger in nodes[] must appear in at least one edge in edges[]
-    
+
     🏭 COLUMN CONNECTIVITY (CRITICAL):
     - ALL columns (distillation, vacuum, packed, absorber, stripper) MUST have connections
     - Every column MUST have at least one feed inlet connected (feed-stage-10, feed-left, etc.)
@@ -283,18 +434,16 @@ export async function POST(request: NextRequest) {
       * Feed stream TO the column (edge from source equipment to column with targetHandle like "feed-stage-10")
       * Product streams FROM the column (edges from column with sourceHandle like "overhead-top" or "bottoms-bottom" to destination equipment)
     - Never create a column without creating the corresponding edges that connect it to the process flow
-    
-    Include relevant process parameters in node data that DWSIM supports:
-    - For columns: "stages" (number of stages), "reflux_ratio", "reboiler_duty" (kW)
-    - For pumps: "pressure_rise" (kPa), "efficiency" (0-1)
-    - For compressors: "pressure_ratio", "efficiency" (0-1)
-    - For heat exchangers: "duty" (kW), "approach_temp" (C)
-    - For reactors: "conversion" (0-1), "temperature" (C), "pressure" (kPa)
-    
+
+    Include relevant process parameters using the EXACT parameter keys listed in the
+    EQUIPMENT PARAMETERS section above. Do NOT use alternative names like "stages",
+    "reflux_ratio", "pressure_rise", "duty", or "temperature" — use n_stages,
+    reflux_ratio_multiple, pressure_rise_kpa, duty_kw, outlet_temperature_c, etc.
+
     Create meaningful connections between equipment.
     All edges should use type: "step" for horizontal/vertical lines.
     Provide detailed DWSIM setup instructions (not Aspen HYSYS).
-    
+
     🔍 BEFORE RETURNING JSON - MANDATORY CONNECTIVITY VERIFICATION:
     1. List every node.id from nodes[]
     2. List every "source" and "target" from edges[]
@@ -327,7 +476,7 @@ export async function POST(request: NextRequest) {
     19. Property package is DWSIM-supported (Peng-Robinson, NRTL, UNIFAC, etc.)
     20. Feed streams have temperature, pressure, and composition specified in stream.data.properties
     21. No unsupported unit types (recipPump, controlValve, etc.) are used - use alternatives instead
-    
+
     🔍 FINAL CONNECTIVITY VERIFICATION (DO THIS BEFORE RETURNING JSON):
     - List all node IDs from nodes[]
     - List all source and target IDs from edges[]
@@ -487,36 +636,580 @@ export async function POST(request: NextRequest) {
       ]
     }`;
 
-    const openai = getOpenAI();
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+// ---------------------------------------------------------------------------
+// Port registry — valid inlet/outlet handles per equipment type
+// Must stay in sync with the AI system prompt port definitions (lines 282-319)
+// ---------------------------------------------------------------------------
+
+const PORT_REGISTRY: Record<string, { inlets: string[]; outlets: string[] }> = {
+  // Distillation columns & towers
+  distillationColumn: { inlets: ['reflux-top', 'feed-stage-6', 'feed-stage-8', 'feed-stage-10', 'feed-stage-12', 'feed-stage-18', 'feed-left', 'in-left'], outlets: ['overhead-top', 'bottoms-bottom'] },
+  packedColumn:       { inlets: ['reflux-top', 'feed-stage-6', 'feed-stage-8', 'feed-stage-10', 'feed-stage-12', 'feed-stage-18', 'feed-left', 'in-left'], outlets: ['overhead-top', 'bottoms-bottom'] },
+  absorber:           { inlets: ['reflux-top', 'feed-stage-6', 'feed-stage-8', 'feed-stage-10', 'feed-stage-12', 'feed-stage-18', 'feed-left', 'in-left'], outlets: ['overhead-top', 'bottoms-bottom'] },
+  stripper:           { inlets: ['reflux-top', 'feed-stage-6', 'feed-stage-8', 'feed-stage-10', 'feed-stage-12', 'feed-stage-18', 'feed-left', 'in-left'], outlets: ['overhead-top', 'bottoms-bottom'] },
+  // 3-phase separator
+  separator3p:        { inlets: ['feed-left'], outlets: ['gas-top', 'oil-right', 'water-bottom'] },
+  // 2-phase separators
+  separator:          { inlets: ['feed-left'], outlets: ['vapor-top', 'liquid-bottom'] },
+  flashDrum:          { inlets: ['feed-left'], outlets: ['vapor-top', 'liquid-bottom'] },
+  surgeDrum:          { inlets: ['feed-left'], outlets: ['vapor-top', 'liquid-bottom'] },
+  knockoutDrumH:      { inlets: ['feed-left'], outlets: ['vapor-top', 'liquid-bottom'] },
+  refluxDrum:         { inlets: ['feed-left'], outlets: ['vapor-top', 'liquid-bottom'] },
+  // Rotating equipment
+  pump:               { inlets: ['suction-left'], outlets: ['discharge-right'] },
+  compressor:         { inlets: ['suction-left'], outlets: ['discharge-right'] },
+  turbine:            { inlets: ['suction-left'], outlets: ['discharge-right'] },
+  // Heat exchangers
+  shellTubeHX:        { inlets: ['hot-in-left', 'cold-in-bottom'], outlets: ['hot-out-right', 'cold-out-top'] },
+  plateHX:            { inlets: ['hot-in-left', 'cold-in-bottom'], outlets: ['hot-out-right', 'cold-out-top'] },
+  doublePipeHX:       { inlets: ['hot-in-left', 'cold-in-bottom'], outlets: ['hot-out-right', 'cold-out-top'] },
+  heaterCooler:       { inlets: ['hot-in-left', 'cold-in-bottom'], outlets: ['hot-out-right', 'cold-out-top'] },
+  condenser:          { inlets: ['hot-in-left', 'cold-in-bottom'], outlets: ['hot-out-right', 'cold-out-top'] },
+  airCooler:          { inlets: ['hot-in-left', 'cold-in-bottom'], outlets: ['hot-out-right', 'cold-out-top'] },
+  firedHeater:        { inlets: ['hot-in-left', 'cold-in-bottom'], outlets: ['hot-out-right', 'cold-out-top'] },
+  kettleReboiler:     { inlets: ['hot-in-left', 'cold-in-bottom'], outlets: ['hot-out-right', 'cold-out-top'] },
+  boiler:             { inlets: ['hot-in-left', 'cold-in-bottom'], outlets: ['hot-out-right', 'cold-out-top'] },
+  // Valves
+  valve:              { inlets: ['in-left'], outlets: ['out-right'] },
+  // Tanks
+  tank:               { inlets: ['in-top'], outlets: ['out-bottom'] },
+  // Mixer / Splitter
+  mixer:              { inlets: ['in-1-left', 'in-2-left', 'in-3-left'], outlets: ['out-right'] },
+  splitter:           { inlets: ['in-left'], outlets: ['out-1-right', 'out-2-right', 'out-3-right'] },
+  // Reactors
+  cstr:               { inlets: ['in-left', 'feed-left'], outlets: ['out-right'] },
+  pfr:                { inlets: ['in-left', 'feed-left'], outlets: ['out-right'] },
+  conversionReactor:  { inlets: ['in-left', 'feed-left'], outlets: ['out-right'] },
+  gibbsReactor:       { inlets: ['in-left', 'feed-left'], outlets: ['out-right'] },
+  equilibriumReactor: { inlets: ['in-left', 'feed-left'], outlets: ['out-right'] },
+  // Separation equipment
+  filter:             { inlets: ['in-left'], outlets: ['out-right'] },
+  cyclone:            { inlets: ['in-left'], outlets: ['out-right'] },
+  adsorber:           { inlets: ['in-left'], outlets: ['out-right'] },
+  membrane:           { inlets: ['in-left'], outlets: ['out-right'] },
+};
+
+/**
+ * Validate and fix sourceHandle/targetHandle on edges.
+ *
+ * When the AI omits handles or uses invalid ones, this assigns the next
+ * available port from PORT_REGISTRY, preventing dict key collisions in
+ * the solver (e.g. two flash drum outlets both mapping to "out").
+ */
+function validateAndFixHandles(nodes: FlowNode[], edges: FlowEdge[]): FlowEdge[] {
+  const nodeTypeMap = new Map<string, string>();
+  for (const node of nodes) {
+    nodeTypeMap.set(node.id, node.type);
+  }
+
+  // Track which outlet/inlet ports have already been assigned per node
+  const usedOutlets = new Map<string, Set<string>>();
+  const usedInlets = new Map<string, Set<string>>();
+
+  const fixedEdges = edges.map(edge => {
+    const fixed = { ...edge };
+    let corrected = false;
+
+    // --- Fix sourceHandle ---
+    const srcType = nodeTypeMap.get(edge.source);
+    if (srcType) {
+      const registry = PORT_REGISTRY[srcType];
+      if (registry) {
+        const validOutlets = registry.outlets;
+        if (!usedOutlets.has(edge.source)) usedOutlets.set(edge.source, new Set());
+        const used = usedOutlets.get(edge.source)!;
+
+        const currentHandle = edge.sourceHandle;
+        const isValid = currentHandle && validOutlets.some(v => v === currentHandle || currentHandle.includes(v.split('-')[0]));
+
+        if (!isValid) {
+          // Assign next unused outlet
+          const nextPort = validOutlets.find(p => !used.has(p));
+          if (nextPort) {
+            fixed.sourceHandle = nextPort;
+            corrected = true;
+          }
+        }
+
+        // Mark the (possibly corrected) handle as used
+        if (fixed.sourceHandle) used.add(fixed.sourceHandle);
+      }
+    }
+
+    // --- Fix targetHandle ---
+    const tgtType = nodeTypeMap.get(edge.target);
+    if (tgtType) {
+      const registry = PORT_REGISTRY[tgtType];
+      if (registry) {
+        const validInlets = registry.inlets;
+        if (!usedInlets.has(edge.target)) usedInlets.set(edge.target, new Set());
+        const used = usedInlets.get(edge.target)!;
+
+        const currentHandle = edge.targetHandle;
+        const isValid = currentHandle && validInlets.some(v => v === currentHandle || currentHandle.includes(v.split('-')[0]));
+
+        if (!isValid) {
+          // Assign next unused inlet
+          const nextPort = validInlets.find(p => !used.has(p));
+          if (nextPort) {
+            fixed.targetHandle = nextPort;
+            corrected = true;
+          }
+        }
+
+        if (fixed.targetHandle) used.add(fixed.targetHandle);
+      }
+    }
+
+    if (corrected) {
+      console.log(`[handleFix] Edge '${edge.id}': sourceHandle ${edge.sourceHandle ?? '(none)'} → ${fixed.sourceHandle}, targetHandle ${edge.targetHandle ?? '(none)'} → ${fixed.targetHandle}`);
+    }
+
+    return fixed;
+  });
+
+  return fixedEdges;
+}
+
+/**
+ * Minimum required outlets per multi-outlet equipment type.
+ * If the AI generates fewer outlet edges than this, we add product stream edges.
+ */
+const MIN_OUTLETS: Record<string, { count: number; handles: string[]; labels: string[] }> = {
+  flashDrum:          { count: 2, handles: ['vapor-top', 'liquid-bottom'],       labels: ['Vapor Product', 'Liquid Product'] },
+  separator:          { count: 2, handles: ['vapor-top', 'liquid-bottom'],       labels: ['Vapor Product', 'Liquid Product'] },
+  knockoutDrumH:      { count: 2, handles: ['vapor-top', 'liquid-bottom'],       labels: ['Vapor Product', 'Liquid Product'] },
+  surgeDrum:          { count: 2, handles: ['vapor-top', 'liquid-bottom'],       labels: ['Vapor Product', 'Liquid Product'] },
+  separator3p:        { count: 3, handles: ['gas-top', 'oil-right', 'water-bottom'], labels: ['Gas Product', 'Oil Product', 'Water Product'] },
+  distillationColumn: { count: 2, handles: ['overhead-top', 'bottoms-bottom'],   labels: ['Overhead', 'Bottoms'] },
+  packedColumn:       { count: 2, handles: ['overhead-top', 'bottoms-bottom'],   labels: ['Overhead', 'Bottoms'] },
+  absorber:           { count: 2, handles: ['overhead-top', 'bottoms-bottom'],   labels: ['Overhead', 'Bottoms'] },
+  stripper:           { count: 2, handles: ['overhead-top', 'bottoms-bottom'],   labels: ['Overhead', 'Bottoms'] },
+  splitter:           { count: 2, handles: ['out-1-right', 'out-2-right'],       labels: ['Split 1', 'Split 2'] },
+};
+
+/**
+ * Add missing outlet product stream edges for multi-outlet units.
+ *
+ * When the AI forgets to create outlet edges for a flash drum or column,
+ * the solver can't store the calculated results. This adds placeholder
+ * product-stream edges so the solver can populate all outlets.
+ */
+function addMissingOutletEdges(nodes: FlowNode[], edges: FlowEdge[]): FlowEdge[] {
+  // Count existing outlet edges per node
+  const outletEdgesPerNode = new Map<string, number>();
+  const usedSourceHandles = new Map<string, Set<string>>();
+  for (const edge of edges) {
+    outletEdgesPerNode.set(edge.source, (outletEdgesPerNode.get(edge.source) ?? 0) + 1);
+    if (!usedSourceHandles.has(edge.source)) usedSourceHandles.set(edge.source, new Set());
+    if (edge.sourceHandle) usedSourceHandles.get(edge.source)!.add(edge.sourceHandle);
+  }
+
+  const newEdges = [...edges];
+  let addedCount = 0;
+
+  for (const node of nodes) {
+    const spec = MIN_OUTLETS[node.type];
+    if (!spec) continue;
+
+    const currentOutlets = outletEdgesPerNode.get(node.id) ?? 0;
+    if (currentOutlets >= spec.count) continue;
+
+    const used = usedSourceHandles.get(node.id) ?? new Set();
+
+    // Add missing outlet edges as product streams
+    for (let i = 0; i < spec.handles.length; i++) {
+      if (used.has(spec.handles[i])) continue;
+      if (currentOutlets + addedCount >= spec.count) break;
+
+      const edgeId = `auto-${node.id}-${spec.handles[i]}`;
+      // Create a product-label node for the product stream endpoint
+      const productNodeId = `product-${node.id}-${i}`;
+      nodes.push({
+        id: productNodeId,
+        type: 'label',
+        position: { x: (node.position?.x ?? 500) + 250, y: (node.position?.y ?? 300) + (i * 200 - 100) },
+        data: { label: spec.labels[i] },
+      });
+
+      newEdges.push({
+        id: edgeId,
+        source: node.id,
+        target: productNodeId,
+        sourceHandle: spec.handles[i],
+        label: spec.labels[i],
+        data: {},
+      });
+
+      addedCount++;
+      console.log(`[autoOutlet] Added missing outlet edge: ${node.id}[${spec.handles[i]}] → ${productNodeId}`);
+    }
+  }
+
+  return newEdges;
+}
+
+/**
+ * Strip non-numeric parameter values that the AI sometimes generates
+ * (e.g. {"outlet_pressure_kpa": "value"} or {"efficiency": "high"}).
+ */
+function sanitizeParameters(nodes: FlowNode[]): FlowNode[] {
+  return nodes.map(node => {
+    if (!node.data?.parameters) return node;
+    const params = { ...node.data.parameters };
+    for (const [key, val] of Object.entries(params)) {
+      if (typeof val === 'string' && key !== 'light_key' && key !== 'heavy_key' && key !== 'base_component') {
+        const num = Number(val);
+        if (!isNaN(num)) {
+          params[key] = num;
+        } else {
+          // Non-numeric string like "value", "high", "auto" — remove it
+          console.log(`[sanitize] Removing non-numeric param '${key}': '${val}' from ${node.id}`);
+          delete params[key];
+        }
+      }
+    }
+    return { ...node, data: { ...node.data, parameters: params } };
+  });
+}
+
+/** Map common AI parameter name variations to the exact keys expected by unit_operations.py */
+function normalizeEquipmentParameters(nodes: FlowNode[]): FlowNode[] {
+  const PARAM_ALIASES: Record<string, string> = {
+    // Distillation
+    stages: 'n_stages',
+    number_of_stages: 'n_stages',
+    num_stages: 'n_stages',
+    reflux_ratio: 'reflux_ratio_multiple',
+    rr_multiple: 'reflux_ratio_multiple',
+    condenser_pressure: 'condenser_pressure_kpa',
+    reboiler_pressure: 'reboiler_pressure_kpa',
+    lightKey: 'light_key',
+    heavyKey: 'heavy_key',
+    // Pumps / compressors
+    pressure_rise: 'pressure_rise_kpa',
+    outlet_pressure: 'outlet_pressure_kpa',
+    discharge_pressure: 'outlet_pressure_kpa',
+    // Heater / cooler
+    outlet_temperature: 'outlet_temperature_c',
+    outlet_temp: 'outlet_temperature_c',
+    duty: 'duty_kw',
+    pressure_drop: 'pressure_drop_kpa',
+    // Flash
+    temperature: 'temperature_c',
+    pressure: 'pressure_kpa',
+    // Reactor
+    outlet_temp_c: 'outlet_temperature_c',
+  };
+
+  return nodes.map(node => {
+    if (!node.data?.parameters) return node;
+    const params = { ...node.data.parameters };
+    for (const [alias, canonical] of Object.entries(PARAM_ALIASES)) {
+      if (alias in params && !(canonical in params)) {
+        params[canonical] = params[alias];
+        delete params[alias];
+      }
+    }
+    return { ...node, data: { ...node.data, parameters: params } };
+  });
+}
+
+/** Ensure a reaction value is a valid number; return fallback otherwise */
+function sanitizeReactionNumber(val: any, fallback: number): number {
+  if (typeof val === 'number' && isFinite(val)) return val;
+  if (typeof val === 'string') {
+    const n = Number(val);
+    if (isFinite(n)) return n;
+  }
+  return fallback;
+}
+
+/** Sanitize stoichiometric coefficient maps — strip non-numeric values */
+function sanitizeStoichMap(map: Record<string, any>): Record<string, number> {
+  const clean: Record<string, number> = {};
+  for (const [comp, coeff] of Object.entries(map)) {
+    clean[comp] = sanitizeReactionNumber(coeff, 1.0);
+  }
+  return clean;
+}
+
+/** Convert simplified AI reaction format to solver-expected stoichiometric format */
+function normalizeReactions(nodes: FlowNode[]): FlowNode[] {
+  const REACTOR_TYPES = new Set([
+    'conversionReactor', 'cstr', 'pfr', 'gibbsReactor', 'equilibriumReactor',
+  ]);
+  return nodes.map(node => {
+    if (!REACTOR_TYPES.has(node.type) || !node.data?.parameters?.reactions) return node;
+    const params = { ...node.data.parameters };
+    const reactions = params.reactions as any[];
+    params.reactions = reactions.map((r: any) => {
+      // Already in correct format — sanitize numeric values
+      if (r.reactants && r.products) {
+        return {
+          ...r,
+          reactants: sanitizeStoichMap(r.reactants),
+          products: sanitizeStoichMap(r.products),
+          conversion: sanitizeReactionNumber(r.conversion, 0.95),
+        };
+      }
+      // Simplified format: { reactant, product, conversion }
+      if (r.reactant && r.product) {
+        const products: Record<string, number> = {};
+        if (Array.isArray(r.product)) {
+          for (const p of r.product) products[p] = 1;
+        } else {
+          products[r.product] = 1;
+        }
+        return {
+          reactants: { [r.reactant]: 1 },
+          products,
+          conversion: sanitizeReactionNumber(r.conversion, 0.95),
+          base_component: r.reactant,
+        };
+      }
+      return r; // Unknown format, pass through
+    });
+    return { ...node, data: { ...node.data, parameters: params } };
+  });
+}
+
+/**
+ * Ensure every process unit has at least one incoming edge.
+ *
+ * When the AI generates a mixer (or heater, etc.) with 0 incoming edges,
+ * the solver skips it (no inlets) and everything downstream cascades.
+ * This function detects orphaned units and either:
+ *   a) Moves feed data from outgoing edges to new incoming feed edges, or
+ *   b) Creates a synthetic feed from the thermo config.
+ */
+function ensureUnitInlets(
+  nodes: FlowNode[],
+  edges: FlowEdge[],
+  thermo?: { package: string; components: string[] },
+): FlowEdge[] {
+  const NEEDS_INLET = new Set([
+    'mixer', 'heaterCooler', 'firedHeater', 'conversionReactor', 'cstr', 'pfr',
+    'pump', 'compressor', 'turbine', 'valve', 'flashDrum', 'separator',
+    'distillationColumn', 'packedColumn', 'absorber', 'stripper',
+    'shellTubeHX', 'airCooler', 'condenser', 'kettleReboiler', 'boiler',
+    'splitter', 'membrane', 'filter', 'cyclone',
+  ]);
+
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
+  const incomingCount = new Map<string, number>();
+  for (const edge of edges) {
+    if (nodeMap.has(edge.target)) {
+      incomingCount.set(edge.target, (incomingCount.get(edge.target) ?? 0) + 1);
+    }
+  }
+
+  const newEdges = [...edges];
+
+  for (const node of nodes) {
+    const incoming = incomingCount.get(node.id) ?? 0;
+    if (incoming > 0 || !NEEDS_INLET.has(node.type)) continue;
+
+    // This unit has NO incoming edges — check if any outgoing edge has feed data
+    const outgoingWithData = edges.filter(e =>
+      e.source === node.id && e.data?.temperature != null && e.data?.composition
+    );
+
+    if (outgoingWithData.length > 0) {
+      // Move feed data from outgoing edges to new incoming feed edges
+      for (let i = 0; i < outgoingWithData.length; i++) {
+        const feedNodeId = `feed-source-${node.id}-${i}`;
+        nodes.push({
+          id: feedNodeId, type: 'label',
+          position: { x: (node.position?.x ?? 300) - 200, y: (node.position?.y ?? 300) + i * 100 },
+          data: { label: `Feed ${i + 1}` },
+        });
+        const inletHandle = node.type === 'mixer' ? `in-${i + 1}-left` : 'in-left';
+        newEdges.push({
+          id: `feed-${node.id}-${i}`,
+          source: feedNodeId, target: node.id,
+          sourceHandle: 'out-right', targetHandle: inletHandle,
+          data: { ...outgoingWithData[i].data },
+        });
+        // Clear feed data from original outgoing edge (solver will compute it)
+        outgoingWithData[i].data = {};
+        console.log(`[ensureInlets] Moved feed data from outgoing edge to new inlet for ${node.id}`);
+      }
+    } else {
+      // No outgoing edges with data either — create a synthetic feed from thermo config
+      const comps = thermo?.components ?? [];
+      if (comps.length > 0) {
+        const feedNodeId = `feed-source-${node.id}`;
+        nodes.push({
+          id: feedNodeId, type: 'label',
+          position: { x: (node.position?.x ?? 300) - 200, y: node.position?.y ?? 300 },
+          data: { label: 'Feed' },
+        });
+        const composition: Record<string, number> = {};
+        comps.forEach((c: string) => composition[c] = 1.0 / comps.length);
+        const inletHandle = node.type === 'mixer' ? 'in-1-left' : 'in-left';
+        newEdges.push({
+          id: `feed-${node.id}`,
+          source: feedNodeId, target: node.id,
+          sourceHandle: 'out-right', targetHandle: inletHandle,
+          data: { temperature: 25, pressure: 101.325, flow_rate: 10000, composition },
+        });
+        console.log(`[ensureInlets] Created synthetic feed for orphaned unit ${node.id}`);
+      }
+    }
+  }
+  return newEdges;
+}
+
+/** Fill process-aware default parameters so the solver doesn't fail on missing specs */
+function validateAndFillDefaults(nodes: FlowNode[], edges: FlowEdge[]): FlowNode[] {
+  // Build a map: nodeId → feed pressure from the first incoming edge that has pressure data
+  const feedPressureMap = new Map<string, number>();
+  // Build a map: nodeId → feed temperature from the first incoming edge that has temperature data
+  const feedTempMap = new Map<string, number>();
+  for (const edge of edges) {
+    if (edge.data?.pressure != null && !feedPressureMap.has(edge.target)) {
+      feedPressureMap.set(edge.target, Number(edge.data.pressure));
+    }
+    if (edge.data?.temperature != null && !feedTempMap.has(edge.target)) {
+      feedTempMap.set(edge.target, Number(edge.data.temperature));
+    }
+  }
+
+  // Count outlet edges per node (for splitter fraction defaults)
+  const outletCountMap = new Map<string, number>();
+  for (const edge of edges) {
+    outletCountMap.set(edge.source, (outletCountMap.get(edge.source) ?? 0) + 1);
+  }
+
+  const HEATER_COOLER_TYPES = new Set([
+    'heaterCooler', 'firedHeater', 'condenser', 'airCooler', 'boiler', 'kettleReboiler',
+  ]);
+
+  return nodes.map(node => {
+    if (!node.data) return node;
+    const params = { ...(node.data.parameters ?? {}) };
+    const feedP = feedPressureMap.get(node.id);
+    const t = node.type;
+
+    if (t === 'pump') {
+      if (params.outlet_pressure_kpa == null && params.pressure_rise_kpa == null) {
+        params.pressure_rise_kpa = Math.max((feedP ?? 1000) * 0.1, 100);
+      }
+    } else if (t === 'compressor') {
+      if (params.outlet_pressure_kpa == null && params.pressure_ratio == null) {
+        params.pressure_ratio = 3.0;
+      }
+    } else if (t === 'turbine') {
+      if (params.outlet_pressure_kpa == null && params.pressure_ratio == null) {
+        params.pressure_ratio = 3.0;
+      }
+    } else if (t === 'valve') {
+      if (params.outlet_pressure_kpa == null && params.pressure_drop_kpa == null) {
+        params.pressure_drop_kpa = Math.max((feedP ?? 500) * 0.2, 50);
+      }
+    } else if (['distillationColumn', 'packedColumn', 'absorber', 'stripper'].includes(t)) {
+      if (params.condenser_pressure_kpa == null) {
+        params.condenser_pressure_kpa = feedP ?? 101.325;
+      }
+      if (params.reboiler_pressure_kpa == null) {
+        params.reboiler_pressure_kpa = Number(params.condenser_pressure_kpa) * 1.1;
+      }
+    } else if (t === 'splitter') {
+      if (params.fractions == null) {
+        const outCount = outletCountMap.get(node.id) ?? 2;
+        params.fractions = Array(outCount).fill(1 / outCount);
+      }
+    }
+
+    // Heater/cooler defaults — assign outlet_temperature_c when nothing is specified
+    if (HEATER_COOLER_TYPES.has(t)) {
+      if (params.outlet_temperature_c == null && params.duty_kw == null) {
+        const label = (node.data.label || node.id).toLowerCase();
+        if (label.includes('cooler') || label.includes('condenser') || t === 'condenser' || t === 'airCooler') {
+          params.outlet_temperature_c = 35;  // Cooling water or ambient
+        } else if (label.includes('heater') || label.includes('fired') || label.includes('boiler')
+                   || t === 'firedHeater' || t === 'boiler' || t === 'kettleReboiler') {
+          const feedT = feedTempMap.get(node.id);
+          params.outlet_temperature_c = feedT != null ? feedT + 100 : 200;
+        } else {
+          // Generic heaterCooler — try to infer from label
+          const feedT = feedTempMap.get(node.id);
+          if (label.includes('preheat') || label.includes('warm') || label.includes('reheat')) {
+            params.outlet_temperature_c = feedT != null ? feedT + 50 : 150;
+          } else {
+            // Default to cooling (more common in process plants)
+            params.outlet_temperature_c = 35;
+          }
+        }
+        console.log(`[defaults] Set ${node.id} outlet_temperature_c = ${params.outlet_temperature_c}`);
+      }
+    }
+
+    return { ...node, data: { ...node.data, parameters: params } };
+  });
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const { prompt, retryCount = 0, components = [], propertyPackage = '' } = await request.json();
+
+    if (!prompt) {
+      return NextResponse.json(
+        { error: 'Prompt is required' },
+        { status: 400 }
+      );
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json(
+        { error: 'OpenAI API key is not configured. Please set OPENAI_API_KEY environment variable.' },
+        { status: 500 }
+      );
+    }
+
+    // Build user message with optional component/package context
+    let userMessage = prompt;
+    if (components.length > 0 || propertyPackage) {
+      const thermoContext: string[] = [];
+      if (components.length > 0) {
+        thermoContext.push(`Chemical components to use: ${components.join(', ')}`);
+      }
+      if (propertyPackage) {
+        thermoContext.push(`Property package: ${propertyPackage}`);
+      }
+      userMessage = `${prompt}\n\nThermodynamic configuration provided by user:\n${thermoContext.join('\n')}\nUse these in the "thermo" object of the response.`;
+    }
+
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const response = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 10000,
       messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: prompt }
+        { role: 'system', content: FLOWSHEET_SYSTEM_PROMPT },
+        { role: 'user', content: userMessage },
       ],
       temperature: 0.3,
-      max_tokens: 10000,
-      response_format: { type: "json_object" }, // Force JSON mode (requires model support)
+      response_format: { type: 'json_object' },
     });
 
-    const responseText = completion.choices[0]?.message?.content;
-    
+    // Extract text from OpenAI response
+    const responseText = response.choices[0]?.message?.content ?? '';
+
     if (!responseText) {
       throw new Error('No response from OpenAI');
     }
 
     // Extract JSON from response (handle markdown code blocks and extra text)
     let jsonText = responseText.trim();
-    
+
     // Remove markdown code blocks if present
     if (jsonText.startsWith('```')) {
-      // Remove opening ```json or ```
       jsonText = jsonText.replace(/^```(?:json)?\s*/i, '');
-      // Remove closing ```
       jsonText = jsonText.replace(/\s*```$/i, '');
       jsonText = jsonText.trim();
     }
-    
+
     // Try to extract JSON object if there's extra text
     const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
@@ -528,26 +1221,24 @@ export async function POST(request: NextRequest) {
     try {
       flowsheetData = JSON.parse(jsonText);
     } catch (parseError) {
-      console.error('Failed to parse OpenAI response:', {
+      console.error('Failed to parse AI response:', {
         originalLength: responseText.length,
         extractedLength: jsonText.length,
         firstChars: jsonText.substring(0, 200),
         lastChars: jsonText.substring(Math.max(0, jsonText.length - 200)),
         parseError: parseError instanceof Error ? parseError.message : String(parseError)
       });
-      
-      // If this is a retry, don't retry again
+
       if (retryCount > 0) {
         return NextResponse.json(
-          { 
+          {
             error: 'Invalid JSON response from AI after retry',
             details: 'The AI returned malformed JSON. Please try again with a simpler prompt.'
           },
           { status: 500 }
         );
       }
-      
-      // First attempt failed, retry with explicit JSON format instruction
+
       const jsonRetryPrompt = `${prompt}
 
 🚨 CRITICAL: JSON FORMAT ERROR
@@ -570,13 +1261,12 @@ Return ONLY this JSON structure:
   "description": "..."
 }`;
 
-      // Recursive call with retry count
       const retryRequest = new NextRequest(request.url, {
         method: 'POST',
         headers: request.headers,
         body: JSON.stringify({ prompt: jsonRetryPrompt, retryCount: 1 })
       });
-      
+
       return POST(retryRequest);
     }
 
@@ -659,6 +1349,58 @@ Return ONLY this JSON structure:
       }));
     }
 
+    // Normalize equipment parameter names (safety net for AI variations)
+    if (flowsheetData.nodes) {
+      flowsheetData.nodes = sanitizeParameters(flowsheetData.nodes);
+      flowsheetData.nodes = normalizeEquipmentParameters(flowsheetData.nodes);
+      flowsheetData.nodes = normalizeReactions(flowsheetData.nodes);
+      flowsheetData.nodes = validateAndFillDefaults(flowsheetData.nodes, flowsheetData.edges);
+    }
+
+    // Sanitize edge data — strip non-numeric strings like "value" from stream properties
+    if (flowsheetData.edges) {
+      flowsheetData.edges = flowsheetData.edges.map((edge: FlowEdge) => {
+        if (!edge.data) return edge;
+        const data = { ...edge.data };
+        for (const [key, val] of Object.entries(data)) {
+          if (key === 'composition' && typeof val === 'object' && val !== null) {
+            // Sanitize composition values too
+            const comp = { ...val as Record<string, any> };
+            for (const [ck, cv] of Object.entries(comp)) {
+              if (typeof cv === 'string') {
+                const n = Number(cv);
+                if (isFinite(n)) { comp[ck] = n; } else { delete comp[ck]; }
+              }
+            }
+            data[key] = comp;
+          } else if (typeof val === 'string') {
+            const n = Number(val);
+            if (isFinite(n)) { data[key] = n; } else {
+              console.log(`[sanitize-edge] Removing non-numeric '${key}': '${val}' from edge ${edge.id}`);
+              delete data[key];
+            }
+          }
+        }
+        return { ...edge, data };
+      });
+    }
+
+    // Fix missing/invalid sourceHandle and targetHandle on edges
+    if (flowsheetData.edges) {
+      flowsheetData.edges = validateAndFixHandles(flowsheetData.nodes, flowsheetData.edges);
+    }
+
+    // Auto-add missing outlet edges for multi-outlet units (flash drums, columns, etc.)
+    // When AI omits product stream edges, add them so the solver can populate outlets.
+    if (flowsheetData.nodes && flowsheetData.edges) {
+      flowsheetData.edges = addMissingOutletEdges(flowsheetData.nodes, flowsheetData.edges);
+    }
+
+    // Topology repair: ensure every process unit has at least one incoming edge
+    if (flowsheetData.nodes && flowsheetData.edges) {
+      flowsheetData.edges = ensureUnitInlets(flowsheetData.nodes, flowsheetData.edges, flowsheetData.thermo);
+    }
+
     // Validate required fields
     if (!flowsheetData.nodes || !flowsheetData.edges || !flowsheetData.dwsimInstructions) {
       return NextResponse.json(
@@ -667,35 +1409,116 @@ Return ONLY this JSON structure:
       );
     }
 
-    // Check for isolated equipment (equipment not connected to any other equipment)
+    // Normalize compound names (underscores→spaces, common abbreviations)
+    if (flowsheetData.thermo?.components) {
+      flowsheetData.thermo.components = flowsheetData.thermo.components.map((c: string) =>
+        c.replace(/_/g, ' ').trim()
+      );
+    }
+
+    // Auto-correct property package: NRTL/UNIFAC/UNIQUAC can't handle gas-dominated mixtures
+    // with non-condensable components (H2, N2, O2, CO, CH4) — fall back to SRK
+    if (flowsheetData.thermo?.package && ['NRTL', 'UNIFAC', 'UNIQUAC'].includes(flowsheetData.thermo.package)) {
+      const NON_CONDENSABLES = new Set([
+        'hydrogen', 'nitrogen', 'oxygen', 'carbon monoxide', 'methane',
+        'ethane', 'argon', 'helium', 'carbon dioxide', 'ethylene',
+      ]);
+      const comps = flowsheetData.thermo.components ?? [];
+      const gasCount = comps.filter((c: string) => NON_CONDENSABLES.has(c.toLowerCase())).length;
+      if (comps.length > 0 && gasCount / comps.length > 0.5) {
+        console.log(`[thermo] Auto-correcting ${flowsheetData.thermo.package} → SRK (${gasCount}/${comps.length} non-condensable components)`);
+        flowsheetData.thermo.package = 'SRK';
+      }
+    }
+
+    // Validate and fix feed stream thermodynamic data
+    const thermoComponents = flowsheetData.thermo?.components ?? components;
+
+    // Auto-inject light_key / heavy_key for distillation columns if missing
+    const COLUMN_TYPES = new Set(['distillationColumn', 'packedColumn', 'absorber', 'stripper']);
+    for (const node of flowsheetData.nodes) {
+      if (COLUMN_TYPES.has(node.type) && thermoComponents.length >= 2) {
+        if (!node.data.parameters) node.data.parameters = {};
+        if (!node.data.parameters.light_key && !node.data.parameters.heavy_key) {
+          // Pick middle split — same logic as Python auto-detection
+          const mid = Math.floor(thermoComponents.length / 2);
+          node.data.parameters.light_key = thermoComponents[mid - 1];
+          node.data.parameters.heavy_key = thermoComponents[mid];
+        }
+      }
+    }
+
+    const edgeTargets = new Set(flowsheetData.edges.map(e => e.target));
+
+    for (const edge of flowsheetData.edges) {
+      const sourceHasNoIncoming = edge.source && !edgeTargets.has(edge.source);
+      const hasData = edge.data && edge.data.temperature != null;
+
+      if (sourceHasNoIncoming || hasData) {
+        if (!edge.data) edge.data = {};
+
+        if (edge.data.composition && thermoComponents.length > 0) {
+          const comp = edge.data.composition as Record<string, number>;
+          for (const c of thermoComponents) {
+            if (!(c in comp)) {
+              const lowerMatch = Object.keys(comp).find(k => k.toLowerCase() === c.toLowerCase());
+              if (!lowerMatch) comp[c] = 0.0;
+            }
+          }
+          const total = Object.values(comp).reduce((s: number, v: number) => s + v, 0);
+          if (total > 0 && Math.abs(total - 1.0) > 0.01) {
+            for (const k of Object.keys(comp)) {
+              comp[k] = comp[k] / total;
+            }
+          }
+        }
+
+        // Create default composition from thermoComponents when AI omitted it
+        if (!edge.data.composition && thermoComponents.length > 0) {
+          const comp: Record<string, number> = {};
+          const frac = 1.0 / thermoComponents.length;
+          for (const c of thermoComponents) {
+            comp[c] = frac;
+          }
+          edge.data.composition = comp;
+        }
+
+        if (edge.data.temperature == null) {
+          edge.data.temperature = 25.0;  // ambient default
+        }
+        if (edge.data.pressure == null) {
+          edge.data.pressure = 101.325;  // atmospheric default
+        }
+        if (edge.data.flow_rate == null) edge.data.flow_rate = 1000.0;
+      }
+    }
+
+    // Check for isolated equipment
     const connectedNodes = new Set<string>();
     const nodesWithIncomingConnections = new Set<string>();
     const nodesWithOutgoingConnections = new Set<string>();
-    
+
     flowsheetData.edges.forEach(edge => {
       connectedNodes.add(edge.source);
       connectedNodes.add(edge.target);
       nodesWithOutgoingConnections.add(edge.source);
       nodesWithIncomingConnections.add(edge.target);
     });
-    
-    // Find truly isolated nodes (not connected at all)
+
     const trulyIsolatedNodes = flowsheetData.nodes.filter(node => !connectedNodes.has(node.id));
-    
-    // Find nodes that might be feed or product equipment (only incoming or only outgoing)
-    const potentialFeedNodes = flowsheetData.nodes.filter(node => 
-      connectedNodes.has(node.id) && 
-      nodesWithOutgoingConnections.has(node.id) && 
+
+    const potentialFeedNodes = flowsheetData.nodes.filter(node =>
+      connectedNodes.has(node.id) &&
+      nodesWithOutgoingConnections.has(node.id) &&
       !nodesWithIncomingConnections.has(node.id)
     );
-    
-    const potentialProductNodes = flowsheetData.nodes.filter(node => 
-      connectedNodes.has(node.id) && 
-      nodesWithIncomingConnections.has(node.id) && 
+
+    const potentialProductNodes = flowsheetData.nodes.filter(node =>
+      connectedNodes.has(node.id) &&
+      nodesWithIncomingConnections.has(node.id) &&
       !nodesWithOutgoingConnections.has(node.id)
     );
-    
-    // Log connectivity analysis for debugging
+
     console.log('Connectivity Analysis:', {
       totalNodes: flowsheetData.nodes.length,
       totalEdges: flowsheetData.edges.length,
@@ -705,18 +1528,16 @@ Return ONLY this JSON structure:
       connectedNodes: Array.from(connectedNodes)
     });
 
-    // Only flag as error if there are truly isolated nodes (not connected at all)
     if (trulyIsolatedNodes.length > 0) {
-      // If this is a retry attempt, return error immediately with detailed information
       if (retryCount > 0) {
         const isolatedDetails = trulyIsolatedNodes.map(n => {
           const type = n.type || 'unknown';
           const label = n.data?.label || n.id;
           return `${n.id} (${type}, "${label}")`;
         }).join('; ');
-        
+
         return NextResponse.json(
-          { 
+          {
             error: `Isolated equipment found after retry: ${trulyIsolatedNodes.map(n => n.id).join(', ')}. All equipment must be connected to the main process flow.`,
             details: {
               isolatedEquipment: trulyIsolatedNodes.map(n => ({
@@ -733,187 +1554,64 @@ Return ONLY this JSON structure:
           { status: 500 }
         );
       }
-      
-      // Build detailed list of isolated equipment with their types
+
       const isolatedEquipmentDetails = trulyIsolatedNodes.map(n => {
         const nodeType = n.type || 'unknown';
         const nodeLabel = n.data?.label || n.id;
         return `- ${n.id} (${nodeType}, "${nodeLabel}")`;
       }).join('\n');
-      
-      // Check if any isolated equipment are heat exchangers
-      const isolatedHeatExchangers = trulyIsolatedNodes.filter(n => 
+
+      const isolatedHeatExchangers = trulyIsolatedNodes.filter(n =>
         ['shellTubeHX', 'heaterCooler', 'condenser', 'airCooler', 'kettleReboiler'].includes(n.type)
       );
-      
+
       let heatExchangerGuidance = '';
       if (isolatedHeatExchangers.length > 0) {
         const hxList = isolatedHeatExchangers.map(n => n.id).join(', ');
         const exampleHx = isolatedHeatExchangers[0].id;
         const hxType = isolatedHeatExchangers[0].type || 'heaterCooler';
         const isCooler = ['heaterCooler', 'condenser', 'airCooler'].includes(hxType);
-        
-        // Find upstream and downstream equipment from existing edges
+
         const allConnectedNodes = Array.from(connectedNodes);
         const upstreamExample = allConnectedNodes.length > 0 ? allConnectedNodes[0] : 'upstream-equipment-id';
         const downstreamExample = allConnectedNodes.length > 1 ? allConnectedNodes[1] : 'downstream-equipment-id';
-        
+
         heatExchangerGuidance = `
-🔥🔥🔥 CRITICAL ERROR: HEAT EXCHANGER CONNECTIVITY ISSUE 🔥🔥🔥
-The following heat exchangers are COMPLETELY ISOLATED (no connections at all): ${hxList}
+CRITICAL ERROR: HEAT EXCHANGER CONNECTIVITY ISSUE
+The following heat exchangers are COMPLETELY ISOLATED: ${hxList}
 
-🚨 MANDATORY FIX REQUIRED:
-For EACH isolated heat exchanger, you MUST do ONE of the following:
-1. ADD EDGES connecting it to the process flow, OR
-2. REMOVE it from the nodes array entirely
+MANDATORY FIX: For EACH isolated heat exchanger, either ADD EDGES or REMOVE it from nodes[].
 
-📋 SPECIFIC FIX FOR "${exampleHx}" (type: ${hxType}):
-${isCooler ? `
-For coolers/condensers, connect the HOT process stream:
-- Edge TO cooler: Add to edges[] array:
-  {
-    "id": "stream-to-${exampleHx}",
-    "source": "${upstreamExample}",
-    "sourceHandle": "discharge-right",
-    "target": "${exampleHx}",
-    "targetHandle": "hot-in-left",
-    "type": "step",
-    "label": "Hot Stream To Cooler"
-  }
-- Edge FROM cooler: Add to edges[] array:
-  {
-    "id": "stream-from-${exampleHx}",
-    "source": "${exampleHx}",
-    "sourceHandle": "hot-out-right",
-    "target": "${downstreamExample}",
-    "targetHandle": "suction-left",
-    "type": "step",
-    "label": "Cooled Stream"
-  }
-` : `
-For heaters, connect the COLD process stream:
-- Edge TO heater: Add to edges[] array:
-  {
-    "id": "stream-to-${exampleHx}",
-    "source": "${upstreamExample}",
-    "sourceHandle": "discharge-right",
-    "target": "${exampleHx}",
-    "targetHandle": "cold-in-bottom",
-    "type": "step",
-    "label": "Cold Stream To Heater"
-  }
-- Edge FROM heater: Add to edges[] array:
-  {
-    "id": "stream-from-${exampleHx}",
-    "source": "${exampleHx}",
-    "sourceHandle": "cold-out-top",
-    "target": "${downstreamExample}",
-    "targetHandle": "suction-left",
-    "type": "step",
-    "label": "Heated Stream"
-  }
-`}
+${isCooler ? `For coolers/condensers, connect the HOT process stream through hot-in-left and hot-out-right.` : `For heaters, connect the COLD process stream through cold-in-bottom and cold-out-top.`}
 
-⚠️ IF YOU CANNOT LOGICALLY CONNECT THE HEAT EXCHANGER:
-- You have two options: either add edges OR remove the node entirely
-- Remove "${exampleHx}" from the nodes[] array entirely if you cannot connect it
-- Do NOT leave it in nodes[] without edges connecting it
-
-✅ VERIFICATION: After fixing, verify that "${exampleHx}" appears as "source" or "target" in at least one edge in edges[]`;
+Example edges for "${exampleHx}":
+{"source": "${upstreamExample}", "target": "${exampleHx}", "targetHandle": "${isCooler ? 'hot-in-left' : 'cold-in-bottom'}", "type": "step"}
+{"source": "${exampleHx}", "sourceHandle": "${isCooler ? 'hot-out-right' : 'cold-out-top'}", "target": "${downstreamExample}", "type": "step"}`;
       }
-      
-      // First attempt failed, retry with enhanced prompt
+
       const enhancedPrompt = `${prompt}
 
-🚨 CRITICAL ERROR: The previous attempt created isolated equipment that is not connected to the main process flow. You MUST follow these rules EXACTLY:
+🚨 CRITICAL ERROR: The previous attempt created isolated equipment not connected to the process flow.
 
-ISOLATED EQUIPMENT DETECTED (these have NO connections at all):
+ISOLATED EQUIPMENT DETECTED:
 ${isolatedEquipmentDetails}${heatExchangerGuidance}
 
-🚨 ABSOLUTE RULE: ALL EQUIPMENT MUST BE CONNECTED
-- Every piece of equipment MUST be connected to at least one other piece of equipment via edges
-- NO equipment can exist in complete isolation (no connections at all)
-- If you create equipment, you MUST create edges connecting it to the process flow
-- Either connect isolated equipment to the nearest logical process path or remove it entirely
+ABSOLUTE RULE: ALL EQUIPMENT MUST BE CONNECTED via edges. Either connect them or remove them.
 
-🔧 MANDATORY CONNECTIVITY REQUIREMENTS:
-- Every separator must have feed inlet and product outlets connected via edges
-- Every pump must have suction inlet and discharge outlet connected via edges
-- Every compressor must have suction inlet and discharge outlet connected via edges
-- Every heat exchanger (shellTubeHX, heaterCooler, condenser, airCooler) MUST have at least ONE side connected:
-  * For coolers/condensers: Connect hot process stream (hot-in-left → hot-out-right)
-  * For heaters: Connect cold process stream (cold-in-bottom → cold-out-top)
-  * Example cooler edge: {"source": "upstream-equipment", "sourceHandle": "outlet", "target": "hx-cooler-1", "targetHandle": "hot-in-left"}
-  * Example cooler edge: {"source": "hx-cooler-1", "sourceHandle": "hot-out-right", "target": "downstream-equipment", "targetHandle": "inlet"}
-- Every column (including vacuum columns) MUST have:
-  * At least one feed inlet edge (from another equipment TO the column)
-  * At least one product outlet edge (from the column TO another equipment)
-- Every tank must have inlet and outlet connections via edges (unless it's a final product tank)
-
-🏭 CRITICAL: COLUMN CONNECTIVITY
-- If you created a column (distillation, vacuum, packed, absorber, stripper), you MUST create edges for it
-- For each column, create edges in the "edges" array:
-  * Feed edge: {"source": "source-equipment-id", "sourceHandle": "outlet-handle", "target": "column-id", "targetHandle": "feed-stage-10"}
-  * Product edge: {"source": "column-id", "sourceHandle": "overhead-top", "target": "destination-equipment-id", "targetHandle": "inlet-handle"}
-- Example: If you have "col-vacuum-1", create edges connecting it:
-  * One edge FROM another equipment TO col-vacuum-1 (feed)
-  * One or more edges FROM col-vacuum-1 TO other equipment (products)
-
-📋 VALID CONNECTIVITY PATTERNS:
-- Feed equipment: Only outgoing connections (no incoming connections) - THIS IS VALID
-- Product equipment: Only incoming connections (no outgoing connections) - THIS IS VALID
-- Process equipment: Both incoming and outgoing connections - THIS IS VALID
-- Isolated equipment: No connections at all - THIS IS INVALID AND WILL CAUSE FAILURE
-
-📋 EXAMPLE OF CORRECT CONNECTIVITY:
-- separator3p: feed → separator → gas/oil/water → pumps/compressors (with edges connecting each step)
-- heat exchanger/cooler: upstream → hx-cooler-1 (hot-in-left) → hx-cooler-1 (hot-out-right) → downstream (with edges for both connections)
-- column: feed → column → overhead/bottoms → next equipment (with edges for feed, overhead, and bottoms)
-- vacuum column: feed → col-vacuum-1 → overhead/bottoms → next equipment (with edges connecting all)
-
-📋 SPECIFIC EXAMPLE FOR HEAT EXCHANGER (hx-cooler-1):
-If you create "hx-cooler-1" in nodes[], you MUST IMMEDIATELY create edges in edges[] like:
-{
-  "id": "stream-to-cooler",
-  "source": "upstream-equipment-id",
-  "sourceHandle": "discharge-right",
-  "target": "hx-cooler-1",
-  "targetHandle": "hot-in-left",
-  "type": "step",
-  "label": "Hot Stream"
-},
-{
-  "id": "stream-from-cooler",
-  "source": "hx-cooler-1",
-  "sourceHandle": "hot-out-right",
-  "target": "downstream-equipment-id",
-  "targetHandle": "suction-left",
-  "type": "step",
-  "label": "Cooled Stream"
-}
-
-⚠️ CRITICAL: If you cannot find logical upstream/downstream equipment for a heat exchanger, DO NOT create the heat exchanger node. Only create equipment that you can connect.
-
-🚨 FINAL WARNING: If you create any equipment with NO connections at all, the generation will fail. Every piece of equipment must be part of the continuous process flow. You MUST create edges in the "edges" array for every piece of equipment you create.
-
-🔍 MANDATORY PRE-RETURN CHECKLIST (node counting verification):
+MANDATORY PRE-RETURN CHECKLIST:
 1. Count nodes in nodes[]: N nodes
-2. Extract all unique node IDs from edges[] (from "source" and "target" fields): M unique node IDs
-3. Verify N == M (every node must appear in at least one edge) - this is node counting verification
-4. If N != M, either:
-   - Add missing edges for nodes that don't appear in edges[], OR
-   - Remove nodes that don't appear in edges[] from nodes[]
-5. Specifically check: Does "${trulyIsolatedNodes.map(n => n.id).join('", "')}" appear in any edge? If NO, fix it.
+2. Extract all unique node IDs from edges[]: M unique IDs
+3. Verify N == M
+4. Specifically check: Does "${trulyIsolatedNodes.map(n => n.id).join('", "')}" appear in any edge? If NO, fix it.
 
-✅ ONLY return JSON when ALL nodes are connected via edges.`;
+ONLY return JSON when ALL nodes are connected via edges.`;
 
-      // Recursive call with retry count
       const retryRequest = new NextRequest(request.url, {
         method: 'POST',
         headers: request.headers,
         body: JSON.stringify({ prompt: enhancedPrompt, retryCount: 1 })
       });
-      
+
       return POST(retryRequest);
     }
 
@@ -921,8 +1619,9 @@ If you create "hx-cooler-1" in nodes[], you MUST IMMEDIATELY create edges in edg
 
   } catch (error) {
     console.error('Error in flowsheet API:', error);
+    const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: `Internal server error: ${message}` },
       { status: 500 }
     );
   }
