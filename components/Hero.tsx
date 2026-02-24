@@ -1,72 +1,72 @@
-import Link from "next/link";
-import { ArrowRight, Play, Zap, Users, TrendingUp } from "lucide-react";
+import Link from 'next/link';
+import { ArrowRight } from 'lucide-react';
+import FlowsheetMockup from './FlowsheetMockup';
 
 export default function Hero() {
   return (
-    <section className="relative overflow-hidden bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
-      {/* Background Pattern */}
-      <div className="absolute inset-0 bg-grid-pattern opacity-5"></div>
-      
-      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24 lg:py-32">
-        <div className="text-center">
-          {/* Badge */}
-          <div className="inline-flex items-center px-4 py-2 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 text-sm font-medium mb-8">
-            <Zap className="w-4 h-4 mr-2" />
-            AI-Powered Engineering Platform
+    <section className="relative overflow-hidden bg-white dark:bg-gray-950 pt-32 lg:pt-40 pb-20">
+      {/* Subtle radial gradient */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
+
+      <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="lg:grid lg:grid-cols-12 lg:gap-12 items-center">
+          {/* Left column — copy */}
+          <div className="lg:col-span-6 mb-12 lg:mb-0">
+            {/* Badge pill */}
+            <div className="inline-flex items-center px-3 py-1 rounded-full border border-gray-300 dark:border-gray-700 text-sm text-gray-600 dark:text-gray-400 mb-6">
+              AI-Powered Engineering Platform
+            </div>
+
+            {/* Headline */}
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-gray-900 dark:text-white mb-6 leading-[1.1]">
+              Create entire plants in{' '}
+              <span className="text-blue-600">seconds</span>
+            </h1>
+
+            {/* Subheadline */}
+            <p className="text-lg text-gray-600 dark:text-gray-400 mb-8 max-w-lg leading-relaxed">
+              Generate Process Flow Diagrams (PFDs) and unlock industrial optimization insights worth millions—in minutes, not weeks. Join 10,000+ engineers already building the future.
+            </p>
+
+            {/* CTA buttons */}
+            <div className="flex flex-col sm:flex-row gap-3 mb-10">
+              <Link
+                href="/builder"
+                className="group inline-flex items-center justify-center px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Start Building Free
+                <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-0.5 transition-transform" />
+              </Link>
+              <a
+                href="https://cal.com/miras-muratov-uyocve/30min"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center px-6 py-3 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-medium rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+              >
+                Schedule Demo
+              </a>
+            </div>
+
+            {/* Inline stats */}
+            <div className="flex items-center divide-x divide-gray-200 dark:divide-gray-800 text-sm">
+              <div className="pr-6">
+                <span className="block text-2xl font-bold text-gray-900 dark:text-white">10,000+</span>
+                <span className="text-gray-500 dark:text-gray-400">Active Engineers</span>
+              </div>
+              <div className="px-6">
+                <span className="block text-2xl font-bold text-gray-900 dark:text-white">95%</span>
+                <span className="text-gray-500 dark:text-gray-400">Time Saved</span>
+              </div>
+              <div className="pl-6">
+                <span className="block text-2xl font-bold text-gray-900 dark:text-white">$2M+</span>
+                <span className="text-gray-500 dark:text-gray-400">Cost Savings</span>
+              </div>
+            </div>
           </div>
 
-          {/* Main Headline */}
-          <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold text-gray-900 dark:text-white mb-6 leading-tight">
-            <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent"> Create entire plants or buildings in just seconds</span>
-          </h1>
-
-          {/* Subheadline */}
-          <p className="text-xl sm:text-2xl text-gray-600 dark:text-gray-300 mb-8 max-w-3xl mx-auto leading-relaxed">
-            Generate professional flowsheets, P&IDs, and building diagrams in minutes—not weeks. 
-            <span className="font-semibold text-gray-900 dark:text-white"> Join 10,000+ engineers</span> already building the future.
-          </p>
-
-          {/* CTA Buttons */}
-          <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-12">
-            <Link
-              href="/builder"
-              className="group inline-flex items-center px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all duration-300 hover:scale-105 shadow-lg hover:shadow-xl"
-            >
-              <span>Start Building Free</span>
-              <ArrowRight className="w-5 h-5 ml-2 group-hover:translate-x-1 transition-transform" />
-            </Link>
-            <button className="group inline-flex items-center px-8 py-4 bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-semibold rounded-lg border-2 border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-600 transition-all duration-300 hover:scale-105">
-              <Play className="w-5 h-5 mr-2" />
-              <span>Watch Demo</span>
-            </button>
-          </div>
-
-          {/* Stats */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-8 max-w-2xl mx-auto">
-            <div className="text-center">
-              <div className="text-3xl font-bold text-gray-900 dark:text-white mb-2">10,000+</div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">Active Engineers</div>
-            </div>
-            <div className="text-center">
-              <div className="text-3xl font-bold text-gray-900 dark:text-white mb-2">95%</div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">Time Saved</div>
-            </div>
-            <div className="text-center">
-              <div className="text-3xl font-bold text-gray-900 dark:text-white mb-2">$2M+</div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">Cost Savings</div>
-            </div>
-          </div>
-
-          {/* Trust Indicators */}
-          <div className="mt-16">
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">Trusted by engineers at</p>
-            <div className="flex flex-wrap justify-center items-center gap-8 opacity-60">
-              <div className="text-lg font-semibold text-gray-400">ExxonMobil</div>
-              <div className="text-lg font-semibold text-gray-400">Shell</div>
-              <div className="text-lg font-semibold text-gray-400">BASF</div>
-              <div className="text-lg font-semibold text-gray-400">Dow</div>
-              <div className="text-lg font-semibold text-gray-400">Chevron</div>
-            </div>
+          {/* Right column — product mockup */}
+          <div className="lg:col-span-6">
+            <FlowsheetMockup />
           </div>
         </div>
       </div>

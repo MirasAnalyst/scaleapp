@@ -1,0 +1,14 @@
+stream_id,name,temperature_c,pressure_kpa,mass_flow_kg_h,vapor_fraction,type,duty_mw,reflux_ratio
+feed-wellhead,Wellhead Feed,85,4500,125000,0.72,,,
+gas-to-compressor,HP Separator Gas,45,3200,88000,1,,,
+oil-to-stabilizer,HP Separator Liquid,48,3100,37000,0,,,
+sales-gas,Sales Gas,38,7500,85200,1,,,
+stabilized-crude,Stabilized Crude,95,250,34800,0,,,
+condensate,Condensate,42,7200,2800,0,,,
+hp-sep-1,HP Separator,,,,,separator,0,
+compressor-1,Sales Gas Compressor,,,,,compressor,4.2,
+stab-col,Stabilizer Column,,,,,distillationColumn,2.8,1.4
+reboiler-stab,Stabilizer Reboiler,,,,,reboiler,2.6,
+condenser-stab,Stabilizer Condenser,,,,,condenser,-2.1,
+feed-heater,Feed Heater,,,,,heater,1.1,
+cooler-gas,Gas Cooler,,,,,cooler,-1.8

@@ -1,0 +1,141 @@
+{
+  "unitSystem": "SI",
+  "processType": "oil_and_gas",
+  "sourceFile": "oil_gas_sample.json",
+  "streams": [
+    {
+      "stream_id": "feed-wellhead",
+      "name": "Wellhead Feed",
+      "temperature_c": 85,
+      "pressure_kpa": 4500,
+      "mass_flow_kg_h": 125000,
+      "vapor_fraction": 0.72,
+      "composition": {
+        "Methane": 0.42,
+        "Ethane": 0.08,
+        "Propane": 0.06,
+        "i-Butane": 0.02,
+        "n-Butane": 0.03,
+        "n-Pentane": 0.02,
+        "n-Hexane": 0.01,
+        "C7+": 0.05,
+        "Water": 0.28,
+        "CO2": 0.02,
+        "H2S": 0.01
+      }
+    },
+    {
+      "stream_id": "gas-to-compressor",
+      "name": "HP Separator Gas",
+      "temperature_c": 45,
+      "pressure_kpa": 3200,
+      "mass_flow_kg_h": 88000,
+      "vapor_fraction": 1,
+      "composition": {
+        "Methane": 0.55,
+        "Ethane": 0.12,
+        "Propane": 0.08,
+        "i-Butane": 0.03,
+        "n-Butane": 0.04,
+        "n-Pentane": 0.02,
+        "Water": 0.15,
+        "CO2": 0.01
+      }
+    },
+    {
+      "stream_id": "oil-to-stabilizer",
+      "name": "HP Separator Liquid",
+      "temperature_c": 48,
+      "pressure_kpa": 3100,
+      "mass_flow_kg_h": 37000,
+      "vapor_fraction": 0,
+      "composition": {
+        "Methane": 0.05,
+        "Ethane": 0.04,
+        "Propane": 0.08,
+        "n-Butane": 0.06,
+        "n-Pentane": 0.05,
+        "n-Hexane": 0.04,
+        "C7+": 0.58,
+        "Water": 0.10
+      }
+    },
+    {
+      "stream_id": "sales-gas",
+      "name": "Sales Gas",
+      "temperature_c": 38,
+      "pressure_kpa": 7500,
+      "mass_flow_kg_h": 85200,
+      "vapor_fraction": 1
+    },
+    {
+      "stream_id": "stabilized-crude",
+      "name": "Stabilized Crude",
+      "temperature_c": 95,
+      "pressure_kpa": 250,
+      "mass_flow_kg_h": 34800,
+      "vapor_fraction": 0
+    },
+    {
+      "stream_id": "condensate",
+      "name": "Condensate",
+      "temperature_c": 42,
+      "pressure_kpa": 7200,
+      "mass_flow_kg_h": 2800,
+      "vapor_fraction": 0
+    }
+  ],
+  "units": [
+    {
+      "unit_id": "hp-sep-1",
+      "name": "HP Separator",
+      "type": "separator",
+      "duty_mw": 0,
+      "pressure_kpa": 3200,
+      "design_limit_notes": "Max 150 barg design"
+    },
+    {
+      "unit_id": "compressor-1",
+      "name": "Sales Gas Compressor",
+      "type": "compressor",
+      "duty_mw": 4.2,
+      "pressure_kpa": 7500,
+      "design_limit_notes": "IGV 60–100%; max 5.5 MW"
+    },
+    {
+      "unit_id": "stab-col",
+      "name": "Stabilizer Column",
+      "type": "distillationColumn",
+      "duty_mw": 2.8,
+      "reflux_ratio": 1.4,
+      "pressure_kpa": 280,
+      "design_limit_notes": "28 trays; max 3.2 MW reboiler"
+    },
+    {
+      "unit_id": "reboiler-stab",
+      "name": "Stabilizer Reboiler",
+      "type": "reboiler",
+      "duty_mw": 2.6,
+      "duty_mmbtu_h": 8.9
+    },
+    {
+      "unit_id": "condenser-stab",
+      "name": "Stabilizer Condenser",
+      "type": "condenser",
+      "duty_mw": -2.1
+    },
+    {
+      "unit_id": "feed-heater",
+      "name": "Feed Heater",
+      "type": "heater",
+      "duty_mw": 1.1,
+      "duty_mmbtu_h": 3.75
+    },
+    {
+      "unit_id": "cooler-gas",
+      "name": "Gas Cooler",
+      "type": "cooler",
+      "duty_mw": -1.8
+    }
+  ]
+}

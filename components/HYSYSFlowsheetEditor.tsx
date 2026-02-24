@@ -12,8 +12,10 @@ import ReactFlow, {
   Edge,
   Connection,
   EdgeProps,
+  EdgeLabelRenderer,
 } from "reactflow";
 import "reactflow/dist/style.css";
+import { SimulationResult, SimulationStreamResult } from '../lib/simulation';
 
 /**
  * Aspen HYSYS‑style Unit Operations Palette (No GoJS)
@@ -1158,9 +1160,20 @@ const CondenserNode = ({ data }) => {
 // LABEL
 // ────────────────────────────────────────────────────────────────────────────────
 const LabelNode = ({ data }) => {
-  const { text = "Label" } = data || {};
+  const { text, label } = data || {};
+  const displayText = text || label || "Label";
   return (
-    <div style={{ background: "#fff", border: "1px solid #000", padding: "4px 8px", borderRadius: 4, fontWeight: 600 }}>{text}</div>
+    <div style={{
+      background: "#f0f9ff", border: "2px solid #0284c7",
+      padding: "6px 12px", borderRadius: 6, fontWeight: 600,
+      fontSize: 11, color: "#0c4a6e", minWidth: 60, textAlign: "center",
+    }}>
+      <Handle type="target" position={Position.Left} id="in-left"
+        style={{ width: 8, height: 8, background: "#4CAF50", border: "1px solid #fff" }} />
+      {displayText}
+      <Handle type="source" position={Position.Right} id="out-right"
+        style={{ width: 8, height: 8, background: "#f44336", border: "1px solid #fff" }} />
+    </div>
   );
 };
 
@@ -1540,8 +1553,8 @@ const GibbsReactorNode = ({ data }) => { const { width=120,height=90,label="Gibb
     <rect x="0.5" y="0.5" width={width-1} height={height-1} rx={10} ry={10} fill="url(#metalGradient)" stroke="#000"/>
     <text x={width/2} y={height/2+4} fontSize="12" fontWeight={600} textAnchor="middle" fill="#000">{label}</text>
   </svg>
-    <Handle type="target" position={Position.Left} id="suction-left" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
-    <Handle type="source" position={Position.Right} id="discharge-right" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
+    <Handle type="target" position={Position.Left} id="in-left" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#4CAF50", border:"2px solid #fff" }}/>
+    <Handle type="source" position={Position.Right} id="out-right" style={{ top:"55%", transform:"translateY(-50%)", width:12, height:12, background:"#2196F3", border:"2px solid #fff" }}/>
   </div> ); };
 const EquilibriumReactorNode = ({ data }) => { const { width=120,height=90,label="Equil. Reactor" }=data||{}; return (
   <div style={{ width, height }}><svg width={width} height={height}><SvgDefs />
@@ -2132,9 +2145,18 @@ const initialEdges = [
 interface HYSYSFlowsheetEditorProps {
   generatedNodes?: Node[];
   generatedEdges?: Edge[];
+  simulationResult?: SimulationResult | null;
+  onNodeClick?: (node: Node) => void;
+  onEdgeClick?: (edge: Edge) => void;
 }
 
-export default function HYSYSFlowsheetEditor({ generatedNodes = [], generatedEdges = [] }: HYSYSFlowsheetEditorProps) {
+export default function HYSYSFlowsheetEditor({
+  generatedNodes = [],
+  generatedEdges = [],
+  simulationResult,
+  onNodeClick,
+  onEdgeClick,
+}: HYSYSFlowsheetEditorProps) {
   const [nodes, setNodes, onNodesState] = useNodesState(generatedNodes);
   const [edges, setEdges, onEdgesState] = useEdgesState(generatedEdges);
 
@@ -2147,9 +2169,30 @@ export default function HYSYSFlowsheetEditor({ generatedNodes = [], generatedEdg
     setEdges(generatedEdges);
   }, [generatedEdges, setEdges]);
 
+  // Build a lookup map from stream ID to simulation result
+  const streamResultMap = useMemo(() => {
+    const map = new Map<string, SimulationStreamResult>();
+    if (simulationResult?.streams) {
+      for (const s of simulationResult.streams) {
+        map.set(s.id, s);
+      }
+    }
+    return map;
+  }, [simulationResult]);
+
   const onConnect = useCallback((params: Connection) => {
     setEdges((eds) => addEdge({ ...params, type: "step" }, eds));
   }, [setEdges]);
+
+  const handleNodeClick = useCallback(
+    (_event: React.MouseEvent, node: Node) => onNodeClick?.(node),
+    [onNodeClick]
+  );
+
+  const handleEdgeClick = useCallback(
+    (_event: React.MouseEvent, edge: Edge) => onEdgeClick?.(edge),
+    [onEdgeClick]
+  );
 
   const proStyles = useMemo(() => ({
     width: "100%",
@@ -2173,6 +2216,8 @@ export default function HYSYSFlowsheetEditor({ generatedNodes = [], generatedEdg
           onNodesChange={onNodesState}
           onEdgesChange={onEdgesState}
           onConnect={onConnect}
+          onNodeClick={handleNodeClick}
+          onEdgeClick={handleEdgeClick}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           fitView
@@ -2180,6 +2225,43 @@ export default function HYSYSFlowsheetEditor({ generatedNodes = [], generatedEdg
           <Background gap={24} size={1} />
           <MiniMap pannable zoomable />
           <Controls />
+          {/* Inline stream labels from simulation results */}
+          <EdgeLabelRenderer>
+            {edges.map((edge) => {
+              const streamData = streamResultMap.get(edge.id);
+              if (!streamData) return null;
+              // Find source/target nodes to calculate label position
+              const sourceNode = nodes.find((n) => n.id === edge.source);
+              const targetNode = nodes.find((n) => n.id === edge.target);
+              if (!sourceNode || !targetNode) return null;
+              const labelX = (sourceNode.position.x + targetNode.position.x) / 2 + 30;
+              const labelY = (sourceNode.position.y + targetNode.position.y) / 2 - 10;
+              return (
+                <div
+                  key={edge.id}
+                  style={{
+                    position: 'absolute',
+                    transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+                    pointerEvents: 'all',
+                  }}
+                  className="stream-label nodrag nopan cursor-pointer"
+                  onClick={() => onEdgeClick?.(edge)}
+                >
+                  <div className="bg-white/90 dark:bg-gray-800/90 border border-gray-300 dark:border-gray-600 rounded px-1.5 py-0.5 text-[10px] font-mono leading-tight shadow-sm whitespace-nowrap">
+                    <div className="text-gray-700 dark:text-gray-300">
+                      {streamData.temperature_c != null ? `${streamData.temperature_c.toFixed(1)}°C` : ''}
+                      {streamData.pressure_kpa != null ? ` ${streamData.pressure_kpa.toFixed(0)} kPa` : ''}
+                    </div>
+                    {streamData.mass_flow_kg_per_h != null && (
+                      <div className="text-gray-500 dark:text-gray-400">
+                        {streamData.mass_flow_kg_per_h.toFixed(0)} kg/h
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </EdgeLabelRenderer>
         </ReactFlow>
       </div>
     </div>

@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { ThemeProvider } from "next-themes";
-import AuthButton from "@/components/AuthButton";
-import Link from "next/link";
+import LayoutHeader from "@/components/LayoutHeader";
 
 import "styles/globals.css";
 
@@ -33,21 +32,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
       </head>
-      <body className="bg-white dark:bg-black min-h-screen">
+      <body className="bg-white dark:bg-gray-950 min-h-screen">
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
           <div className="min-h-screen flex flex-col">
-            <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="flex justify-between items-center h-16">
-                  <div className="flex items-center">
-                    <Link href="/" className="text-xl font-semibold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
-                      ScaleApp
-                    </Link>
-                  </div>
-                  <AuthButton />
-                </div>
-              </div>
-            </header>
+            <LayoutHeader />
             <main className="flex-1">
               {children}
             </main>
