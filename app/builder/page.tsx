@@ -66,20 +66,63 @@ export default function BuilderPage() {
 
   // Backend health status
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
+  const [backendWarmingUp, setBackendWarmingUp] = useState(false);
+  const hasPingedRef = React.useRef(false);
 
   useEffect(() => {
+    let rapidInterval: ReturnType<typeof setInterval> | null = null;
+    let normalInterval: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
+    let rapidStartTime = Date.now();
+
     const checkHealth = async () => {
       try {
         const res = await fetch('/api/health');
         const data = await res.json();
-        setBackendOnline(data.status === 'ok');
+        const online = data.status === 'ok';
+        if (cancelled) return;
+        setBackendOnline(online);
+        if (online) {
+          setBackendWarmingUp(false);
+          // Switch to normal 30s polling once connected
+          if (rapidInterval) {
+            clearInterval(rapidInterval);
+            rapidInterval = null;
+          }
+          if (!normalInterval) {
+            normalInterval = setInterval(checkHealth, 30000);
+          }
+        }
       } catch {
+        if (cancelled) return;
         setBackendOnline(false);
       }
     };
+
+    // Start with rapid 5s polling to detect cold-start wake-up
+    setBackendWarmingUp(true);
     checkHealth();
-    const interval = setInterval(checkHealth, 30000);
-    return () => clearInterval(interval);
+    rapidInterval = setInterval(() => {
+      // Stop rapid polling after 90s of failures
+      if (Date.now() - rapidStartTime > 90000) {
+        setBackendWarmingUp(false);
+        if (rapidInterval) {
+          clearInterval(rapidInterval);
+          rapidInterval = null;
+        }
+        if (!normalInterval) {
+          normalInterval = setInterval(checkHealth, 30000);
+        }
+        return;
+      }
+      checkHealth();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      if (rapidInterval) clearInterval(rapidInterval);
+      if (normalInterval) clearInterval(normalInterval);
+    };
   }, []);
 
   // Load history from localStorage on component mount
@@ -274,7 +317,7 @@ export default function BuilderPage() {
 
       // Auto-simulate with context-aware messages
       if (!backendOnline) {
-        setSuccess('Flowsheet generated. Start the Python backend to run simulation.');
+        setSuccess('Flowsheet generated. Backend is warming up — please wait and try again.');
       } else {
         try {
           await runSimulation(data);
@@ -300,7 +343,7 @@ export default function BuilderPage() {
     setShowHistory(false);
 
     if (!backendOnline) {
-      setSuccess('Flowsheet loaded from history. Start the Python backend to run simulation.');
+      setSuccess('Flowsheet loaded from history. Backend is warming up — please wait and try again.');
     } else {
       try {
         await runSimulation(item.data);
@@ -393,7 +436,7 @@ export default function BuilderPage() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
-      setSimulationError('DWSIM export failed. Is the Python backend running?');
+      setSimulationError('DWSIM export failed. Backend may be warming up — please wait 30-60 seconds and try again.');
     } finally {
       setIsExporting(false);
     }
@@ -428,7 +471,7 @@ export default function BuilderPage() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
-      setSimulationError('CSV export failed. Is the Python backend running?');
+      setSimulationError('CSV export failed. Backend may be warming up — please wait 30-60 seconds and try again.');
     } finally {
       setIsExporting(false);
     }
@@ -444,9 +487,19 @@ export default function BuilderPage() {
               Process Flowsheet Builder
             </h1>
             {backendOnline !== null && (
-              <span className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${backendOnline ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' : 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300'}`}>
-                <span className={`w-2 h-2 rounded-full ${backendOnline ? 'bg-green-500' : 'bg-red-500'}`} />
-                <span>{backendOnline ? 'Backend Connected' : 'Backend Offline'}</span>
+              <span className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+                backendOnline
+                  ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
+                  : backendWarmingUp
+                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300'
+                    : 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300'
+              }`}>
+                {backendWarmingUp && !backendOnline ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <span className={`w-2 h-2 rounded-full ${backendOnline ? 'bg-green-500' : 'bg-red-500'}`} />
+                )}
+                <span>{backendOnline ? 'Backend Connected' : backendWarmingUp ? 'Backend Warming Up...' : 'Backend Offline'}</span>
               </span>
             )}
           </div>
@@ -523,7 +576,14 @@ export default function BuilderPage() {
             </label>
             <textarea
               value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
+              onChange={(e) => {
+                setPrompt(e.target.value);
+                // Pre-warm backend on first interaction
+                if (!hasPingedRef.current) {
+                  hasPingedRef.current = true;
+                  fetch('/api/health').catch(() => {});
+                }
+              }}
               placeholder="Describe your chemical process... (e.g., 'Create a distillation column to separate ethanol from water with a reboiler and condenser')"
               className="w-full h-32 p-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
             />

@@ -3,12 +3,12 @@ import { NextRequest, NextResponse } from 'next/server';
 const DWSIM_API_URL = process.env.DWSIM_API_URL ?? 'http://localhost:8081';
 
 const BACKEND_OFFLINE_MSG =
-  'Python simulation backend is not running. Start it with: cd services/dwsim_api && uvicorn app.main:app --host 0.0.0.0 --port 8081';
+  'Simulation backend is not reachable. It may be starting up — please wait a moment and try again.';
 
 function isConnectionError(error: unknown): boolean {
   if (error instanceof TypeError && error.message === 'fetch failed') return true;
   const msg = error instanceof Error ? error.message : String(error);
-  return /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|fetch failed/i.test(msg);
+  return /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|fetch failed|abort/i.test(msg);
 }
 
 export async function POST(request: NextRequest) {
@@ -19,6 +19,7 @@ export async function POST(request: NextRequest) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(9000),
     });
 
     if (!response.ok) {

@@ -5,7 +5,7 @@ const DWSIM_API_URL = process.env.DWSIM_API_URL ?? 'http://localhost:8081';
 export async function GET() {
   try {
     const response = await fetch(`${DWSIM_API_URL}/healthz`, {
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(8000),
     });
 
     if (!response.ok) {

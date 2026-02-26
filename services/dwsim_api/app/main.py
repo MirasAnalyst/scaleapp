@@ -26,6 +26,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+async def warmup():
+    """Pre-load thermo engine on startup so the first real request is fast after a cold start."""
+    from .thermo_engine import ThermoEngine
+    try:
+        engine = ThermoEngine(["water"], "Peng-Robinson")
+        engine.pt_flash(300.0, 101325.0, [1.0])
+    except Exception:
+        pass
+
+
 service = SimulationService()
 
 
