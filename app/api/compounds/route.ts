@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
 const DWSIM_API_URL = process.env.DWSIM_API_URL ?? 'http://localhost:8081';
 
 const BACKEND_OFFLINE_MSG =
